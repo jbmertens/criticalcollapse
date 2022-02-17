@@ -3,7 +3,7 @@ import numpy as np
 import scipy.integrate as integ
 import scipy.interpolate as interp
 
-from utils import *
+from ms_hm.utils import *
 
 class MS:
 
