@@ -23,7 +23,7 @@ class HM:
 
 
         self.t0 = MS.t0
-        self.t = t0
+        self.t = self.t0
         self.u = 0
 
         self.RH = self.t0 / self.alpha
