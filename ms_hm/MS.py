@@ -3,6 +3,8 @@ import numpy as np
 import scipy.integrate as integ
 import scipy.interpolate as interp
 
+import utils
+
 class MS:
 
     def __init__(self, R, m, U, w, alpha, A, rho0, deltaL, L, trace_ray=False):
