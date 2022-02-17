@@ -158,7 +158,7 @@ class MS:
                 diff = idx_p_new - self.to_idx(self.Abar_p)
                 if (diff > 1): ##move across more than two grid pints!
                     print('Warning!' + str(self.Abar_p) + ' ' + str(Abar_p_new))
-                    #break
+                    return 2
                 if ( diff > 0): # move across one grid point
                     interp_w = (self.Abar[idx_p_new] - self.Abar_p) / (Abar_p_new - self.Abar_p)
                     # linear interpolation
@@ -174,17 +174,16 @@ class MS:
                     self.R_p = R_p_new
 
                 if(idx_p_new == self.N-2): #going out of the boundary
-                    break
+                    print("Photon has gone out of the outter boundary!")
+                    return 0
 
             step+=1
             self.xi += deltau
 
             if(step % 10 == 0):
                 if(find_exec_pos(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)) > 0):
-                    break
-
-        if step < n_steps:
-            print("Photon has gone out of the outter boundary or horizon is identified!")
+                    print("Horizon is found, code will be terminated!")
+                    return -1
 
 
     def adap_run_steps(self,n_steps, adjust_steps=100, tol=1e-7) :
@@ -201,7 +200,7 @@ class MS:
 
             if (deltau < 1e-9):
                 print("Warning, the time step is too small!")
-                break
+                return 1
 
             if(self.to_idx(self.Abar_p) > 50 and self.to_idx(self.Abar_p) < self.N * 0.8):
                 self.exec_pos = np.max([self.exec_pos, self.to_idx(self.Abar_p) - 10])
@@ -245,9 +244,14 @@ class MS:
 
                 if(self.trace_ray == True):
 
-                    U_p_new = interp.griddata(self.Abar, self.U, Abar_p_new, method='cubic')
-                    m_p_new = interp.griddata(self.Abar, self.m, Abar_p_new, method='cubic')
-                    R_p_new = interp.griddata(self.Abar, self.R, Abar_p_new, method='cubic')
+                    #U_p_new = interp.griddata(self.Abar, self.U, Abar_p_new, method='cubic')
+                    #m_p_new = interp.griddata(self.Abar, self.m, Abar_p_new, method='cubic')
+                    #R_p_new = interp.griddata(self.Abar, self.R, Abar_p_new, method='cubic')
+
+                    U_p_new = np.interp(Abar_p_new, self.Abar, self.U)
+                    m_p_new = np.interp(Abar_p_new, self.Abar, self.m)
+                    R_p_new = np.interp(Abar_p_new, self.Abar, self.R)
+
                     if ( diff > 0): # move across one grid point
                         interp_w = (self.Abar[idx_p_new] - self.Abar_p) / (Abar_p_new - self.Abar_p)
                         # linear interpolation
@@ -270,7 +274,8 @@ class MS:
                 step+=1
                 self.xi += deltau
                 if(idx_p_new == self.N-2): #going out of the boundary
-                    break
+                    print("Photon has gone out of the outter boundary")
+                    return 0
 
             if( diff <=1):
                 # Adjust step size.
@@ -286,11 +291,9 @@ class MS:
 
             if(step % 10 == 0):
                 if(find_exec_pos(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)) > 0):
-                    print("Horizon is found, code has been terminated!")
-                    break
+                    print("Horizon is found, code will be terminated!")
+                    return -1
 
-        if step < n_steps:
-            print("Photon has gone out of the outter boundary or horizon is identified!")
 
     def cfl_deltau(self,R, m, U):
         a = np.exp(self.alpha * self.xi)
