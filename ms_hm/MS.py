@@ -19,7 +19,7 @@ class MS:
 
 
         self.t0 = self.alpha * np.sqrt(3 / (8*np.pi*rho0))
-        self.t = t0
+        self.t = self.t0
         self.xi = 0
 
         self.RH = self.t0 / self.alpha
