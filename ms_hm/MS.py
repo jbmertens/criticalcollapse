@@ -116,9 +116,9 @@ class MS:
     # tell if BH will NOT form
     def BH_not_form(self):
         if(self.m[0] < 1):
-            return False
-        else:
             return True
+        else:
+            return False
 
     def run_steps(self,n_steps, exc_intv=0) :
         step = 0
