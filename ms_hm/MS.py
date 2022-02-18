@@ -8,7 +8,7 @@ from ms_hm.utils import *
 class MS:
 
     def __init__(self, R, m, U, w, alpha, A, rho0,
-                 trace_ray=False, BH_threshold=1):
+                 trace_ray=False, BH_threshold=1, dt_frac=0.05):
         self.R = R
         self.m = m
         self.U = U
@@ -29,7 +29,8 @@ class MS:
         self.Abar_stg = self.to_stg(self.Abar)
 
         self.q = 1
-        self.deltau_i = self.cfl_deltau(self.R, self.m, self.U) * 0.05
+        self.dt_frac = dt_frac
+        self.deltau_i = self.cfl_deltau(self.R, self.m, self.U) * self.dt_frac
         self.deltau_adap = self.deltau_i
 
         # initialize the poton
