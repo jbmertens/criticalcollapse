@@ -12,7 +12,7 @@ from cython.parallel import prange
 
 # first derivative
 @cython.boundscheck(False)  # Deactivate bounds checking
-cpdef dfdA(np.ndarray arr, double deltaL, double [::1] A, double bd = 0, int exec_pos = -1):
+cpdef dfdA(np.ndarray arr, double [::1] A, double bd = 0, int exec_pos = -1):
     cdef int size = arr.shape[0]
     cdef double [:] f = arr
     cdef double [:] res =  np.zeros(size, dtype=np.double)
@@ -45,7 +45,7 @@ cpdef stg_dfdA(np.ndarray arr, double [::1] A):
 
 # first derivative
 @cython.boundscheck(False)  # Deactivate bounds checking
-cpdef WENO_dfdA(np.ndarray arr, double deltaL, double [::1] A, double bd=0):
+cpdef WENO_dfdA(np.ndarray arr,  double [::1] A, double bd=0):
     cdef int size = arr.shape[0]
     cdef double [:] f = arr
     cdef double [:] st_f =  np.zeros(size, dtype=np.double) # i+1/2 field

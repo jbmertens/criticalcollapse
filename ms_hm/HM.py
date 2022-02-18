@@ -16,8 +16,6 @@ class HM:
         self.N = MS.R_hm.shape[0]
 
         self.w = MS.w
-        self.deltaL = MS.deltaL
-        self.L = MS.L
         self.A = MS.A[:self.N]
         self.alpha = MS.alpha
 
@@ -105,10 +103,10 @@ class HM:
 
 
     def k_coeffs(self, R, m, U, xi) :
-        xiprime = WENO_dfdA(xi, self.deltaL, self.Abar, 1e100)
-        Rprime = WENO_dfdA(R, self.deltaL, self.Abar, 1e100)
-        mprime = WENO_dfdA(m, self.deltaL, self.Abar, 1e100)
-        Uprime = WENO_dfdA(U, self.deltaL, self.Abar, 1e100)
+        xiprime = WENO_dfdA(xi, self.Abar, 1e100)
+        Rprime = WENO_dfdA(R, self.Abar, 1e100)
+        mprime = WENO_dfdA(m, self.Abar, 1e100)
+        Uprime = WENO_dfdA(U, self.Abar, 1e100)
 
         #xiprime = WENO_nuni_dfdA(xi, self.Vbar, self.Abar, 1e100)
         #Rprime = WENO_nuni_dfdA(R, self.Vbar, self.Abar, 1e100)
@@ -126,7 +124,7 @@ class HM:
 
 
         drho = self.drho(R, m, U, g, xi, Rprime, mprime, xiprime)
-        #drho  = dfdA(r, self.deltaL, self.Abar, 1e100)
+        #drho  = dfdA(r, self.Abar, 1e100)
         drho[0] = 3 * elambda[0] / exi[0] * ((1 + self.w) * r[0] / ephi[0] - (r[0] + p[0]) * U[0])
         drho[-1] = 0
 
@@ -217,10 +215,10 @@ class HM:
             if(adj_intv > 0 and step % adj_intv == 0):
                 deltau = self.cfl_deltau(self.R, self.m, self.U, self.xi) * 0.05
 
-            #der_U = dfdA(np.exp(self.xi * (self.alpha-1)) * self.Abar * self.R * self.U , self.deltaL, self.Abar, 1e100)
+            #der_U = dfdA(np.exp(self.xi * (self.alpha-1)) * self.Abar * self.R * self.U , self.Abar, 1e100)
 
             #self.Q = self.kappa * (self.Abar[1])**2 * der_U**2
-            #self.Qprime = dfdA(self.Q , self.deltaL, self.Abar, 1e100)
+            #self.Qprime = dfdA(self.Q , self.Abar, 1e100)
             #self.Q_du = (self.Q - self.Q_old) / deltau
 
             #self.Q[der_U > 0] = 0
@@ -256,9 +254,9 @@ class HM:
             print('2m/R is less than the threshold, no BH forms!')
             return -1
 
-        xiprime = WENO_dfdA(xi, self.deltaL, self.Abar, 1e100)
-        Rprime = WENO_dfdA(R, self.deltaL, self.Abar, 1e100)
-        mprime = WENO_dfdA(m, self.deltaL, self.Abar, 1e100)
+        xiprime = WENO_dfdA(xi, self.Abar, 1e100)
+        Rprime = WENO_dfdA(R, self.Abar, 1e100)
+        mprime = WENO_dfdA(m, self.Abar, 1e100)
 
         g = self.gamma(R, m, U, xi)
         r = self.rho(R, m, U, xi, g, xiprime, Rprime, mprime)
@@ -278,9 +276,9 @@ class HM:
         return ( (np.exp(-self.xi/2) * self.R **3 * self.Abar**3 * self.m ) / 2 )[pos]
 
     def cfl_deltau(self,R, m, U, xi):
-        xiprime = dfdA(xi, self.deltaL, self.Abar, 1e100)
-        Rprime = dfdA(R, self.deltaL, self.Abar, 1e100)
-        mprime = dfdA(m, self.deltaL, self.Abar, 1e100)
+        xiprime = dfdA(xi, self.Abar, 1e100)
+        Rprime = dfdA(R, self.Abar, 1e100)
+        mprime = dfdA(m, self.Abar, 1e100)
 
         g = self.gamma(R, m, U, xi)
         r = self.rho(R, m, U, xi, g, xiprime, Rprime, mprime)

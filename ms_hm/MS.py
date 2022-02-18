@@ -8,13 +8,12 @@ from ms_hm.utils import *
 class MS:
 
     def __init__(self, R, m, U, w, alpha, A, rho0,
-                 deltaL, L, trace_ray=False, BH_threshold=1):
+                 trace_ray=False, BH_threshold=1):
         self.R = R
         self.m = m
         self.U = U
         self.w = w
-        self.deltaL = deltaL
-        self.L = L
+
         self.A = A
         self.alpha = alpha
         self.N = R.shape[0]
@@ -82,14 +81,6 @@ class MS:
         rho_stg = m_stg + ms_rho_term_stg(R, m, self.Abar, R_stg, self.Abar_stg)
         return self.w * np.concatenate( ([0], stg_dfdA(rho_stg, self.Abar_stg) ,[0] ))
 
-        mprime = dfdA(m, self.deltaL, self.Abar, 0, self.exec_pos)
-        Rprime = dfdA(R, self.deltaL, self.Abar, 0, self.exec_pos)
-        mpp = ddfddA(m, self.deltaL, self.Abar, 0, self.exec_pos)
-        Rpp = ddfddA(R, self.deltaL, self.Abar, 0, self.exec_pos)
-        return self.w * (4 * self.Abar**2 * mprime * Rprime**2
-                + R**2 * (4 * mprime + self.Abar * mpp)
-               + self.Abar * R * (self.Abar * Rprime * mpp + mprime * (6 * Rprime - self.Abar * Rpp))) \
-                / (3 * (R + self.Abar * Rprime)**2)
 
     def k_coeffs(self, R, m, U, Abar_p, xi) :
         g = self.gamma(R, m, U, xi)
@@ -102,7 +93,7 @@ class MS:
         kR = self.alpha * R * (U * ep - 1)
         km = 2 * m - 3 * self.alpha * U * ep * (p + m)
 
-        AR_prime = R + self.Abar * dfdA(R, self.deltaL, self.Abar, 0, self.exec_pos)
+        AR_prime = R + self.Abar * dfdA(R, self.Abar, 0, self.exec_pos)
 
         kU = U - self.alpha * ep * \
             (   g**2 * np.concatenate( ([self.w
@@ -320,7 +311,7 @@ class MS:
         Pprime = self.Pprime(R, m)
 
         ep = np.exp(self.psi(r, p, Pprime))
-        el =  (dfdA(a * self.A * self.R, self.deltaL, self.Abar, 1) / self.RH) /(a * H * self.RH * g)
+        el =  (dfdA(a * self.A * self.R, self.Abar, 1) / self.RH) /(a * H * self.RH * g)
 
         return (np.log(1 + el / ep / np.exp(self.xi)
                        * self.alpha * np.concatenate( ([1e10],(self.Abar[1:] - self.Abar[0:-1])) ) / np.sqrt(self.w))).min()
