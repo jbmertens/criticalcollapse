@@ -8,7 +8,7 @@ from ms_hm.utils import *
 class MS:
 
     def __init__(self, R, m, U, w, alpha, A, rho0,
-                 deltaL, L, trace_ray=False, rho_tol=10):
+                 deltaL, L, trace_ray=False, BH_threshold=1):
         self.R = R
         self.m = m
         self.U = U
@@ -51,7 +51,9 @@ class MS:
 
         self.xi_hm[0] = 0
         self.r_old = 0
-        return
+
+        self.BH_threshold = BH_threshold
+
     # convert to half grid
     def to_stg(self,arr):
         return (arr[0:-1] + arr[1:]) / 2
@@ -115,7 +117,7 @@ class MS:
 
     # tell if BH will NOT form
     def BH_not_form(self):
-        if(self.m[0] < 1):
+        if(self.m[0] < self.BH_threshold):
             return True
         else:
             return False
