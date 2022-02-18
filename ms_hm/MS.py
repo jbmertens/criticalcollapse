@@ -7,7 +7,8 @@ from ms_hm.utils import *
 
 class MS:
 
-    def __init__(self, R, m, U, w, alpha, A, rho0, deltaL, L, trace_ray=False):
+    def __init__(self, R, m, U, w, alpha, A, rho0,
+                 deltaL, L, trace_ray=False, rho_tol=10):
         self.R = R
         self.m = m
         self.U = U
@@ -87,6 +88,7 @@ class MS:
                 + R**2 * (4 * mprime + self.Abar * mpp)
                + self.Abar * R * (self.Abar * Rprime * mpp + mprime * (6 * Rprime - self.Abar * Rpp))) \
                 / (3 * (R + self.Abar * Rprime)**2)
+
     def k_coeffs(self, R, m, U, Abar_p, xi) :
         g = self.gamma(R, m, U, xi)
         r = self.rho(R, m)
@@ -111,7 +113,12 @@ class MS:
         kA_p = self.alpha * np.interp(Abar_p,self.Abar, ep * g / AR_prime)
         return kR, km, kU, kA_p
 
-
+    # tell if BH will NOT form
+    def BH_not_form(self):
+        if(self.m[0] < 1):
+            return False
+        else:
+            return True
 
     def run_steps(self,n_steps, exc_intv=0) :
         step = 0
@@ -124,6 +131,8 @@ class MS:
 
         while(step < n_steps) :
 
+            if(self.BH_not_form() == True):
+                return -2
             if(self.to_idx(self.Abar_p) > 50 and self.to_idx(self.Abar_p) < self.N * 0.8):
                 self.exec_pos = np.max([self.exec_pos, self.to_idx(self.Abar_p) - 10])
 
@@ -197,6 +206,9 @@ class MS:
 
 
         while(step < n_steps):
+
+            if(self.BH_not_form() == True):
+                return -2
 
             if (deltau < 1e-9):
                 print("Warning, the time step is too small!")
