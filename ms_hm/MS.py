@@ -218,6 +218,7 @@ class MS:
                 self.exec_pos = np.max([self.exec_pos, self.to_idx(self.Abar_p) - 10])
             exec_arr = np.concatenate(([0] * (self.exec_pos+1),[1] * (self.N - self.exec_pos - 1)))
 
+            r = self.rho(self.R, self.m)
             if(self.delta ==-1 and np.interp(self.RH * np.exp(self.xi), self.Abar, r) < 1):
                 self.delta = np.interp(self.RH * np.exp(self.xi), self.Abar, self.m) - 1
 
