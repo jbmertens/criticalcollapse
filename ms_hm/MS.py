@@ -133,8 +133,8 @@ class MS:
 
             r = self.rho(self.R, self.m)
             # when density perturbation enters the cosmic horizon
-            if(self.delta ==-1 and np.interp(self.RH * np.exp(self.xi), self.Abar, r) < 1):
-                self.delta = np.interp(self.RH * np.exp(self.xi), self.Abar, self.m) - 1
+            if(self.delta ==-1 and np.interp( np.exp(self.xi), self.Abar, r) < 1):
+                self.delta = np.interp( np.exp(self.xi), self.Abar, self.m) - 1
 
             exec_arr = np.concatenate(([0] * (self.exec_pos+1),[1] * (self.N - self.exec_pos - 1)))
 
@@ -219,8 +219,8 @@ class MS:
             exec_arr = np.concatenate(([0] * (self.exec_pos+1),[1] * (self.N - self.exec_pos - 1)))
 
             r = self.rho(self.R, self.m)
-            if(self.delta ==-1 and np.interp(self.RH * np.exp(self.xi), self.Abar, r) < 1):
-                self.delta = np.interp(self.RH * np.exp(self.xi), self.Abar, self.m) - 1
+            if(self.delta ==-1 and np.interp(np.exp(self.xi), self.Abar, r) < 1):
+                self.delta = np.interp(np.exp(self.xi), self.Abar, self.m) - 1
 
 
             kR1, km1, kU1, kA_p1 = self.k_coeffs(self.R, self.m, self.U, self.Abar_p, self.xi)
