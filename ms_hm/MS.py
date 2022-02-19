@@ -53,6 +53,7 @@ class MS:
         self.r_old = 0
 
         self.BH_threshold = BH_threshold
+        self.delta = -1
 
     # convert to half grid
     def to_stg(self,arr):
@@ -129,6 +130,11 @@ class MS:
                 return -2
             if(self.to_idx(self.Abar_p) > 50 and self.to_idx(self.Abar_p) < self.N * 0.8):
                 self.exec_pos = np.max([self.exec_pos, self.to_idx(self.Abar_p) - 10])
+
+            r = self.rho(self.R, self.m)
+            # when density perturbation enters the cosmic horizon
+            if(self.delta ==-1 and np.interp(self.RH * np.exp(self.xi), self.Abar, r) < 1):
+                self.delta = np.interp(self.RH * np.exp(self.xi), self.Abar, self.m) - 1
 
             exec_arr = np.concatenate(([0] * (self.exec_pos+1),[1] * (self.N - self.exec_pos - 1)))
 
