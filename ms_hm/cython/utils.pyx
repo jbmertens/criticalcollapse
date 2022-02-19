@@ -260,3 +260,17 @@ cpdef rho_prime(np.ndarray R_in, double [:] m, double [:] A, double [:] xi,
                         + A[i] * Rpp[i] + a * R[i] * (xip[i] + A[i] * xipp[i])) ) \
                 / (R[i] + A[i] * Rp[i] + A[i] * a * R[i] * xip[i])**2
     return np.asarray(res)
+
+
+@cython.boundscheck(False)  # Deactivate bounds checking
+cpdef zero_crossing(np.ndarray x_in, double [::1] y):
+    cdef int size = x_in.shape[0]
+    cdef double [:] x = x_in
+    cdef double w, res=-1
+    cdef int i
+    for i in range(size-1):
+        if(y[i] * y[i+1] < 0):
+            w = abs(y[i] / (y[i+1] - y[i]))
+            res = x[i] * (1 - w) + x[i+1] * w
+            break
+    return res
