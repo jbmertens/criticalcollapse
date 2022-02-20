@@ -131,14 +131,12 @@ class MS:
             if(self.to_idx(self.Abar_p) > 50 and self.to_idx(self.Abar_p) < self.N * 0.8):
                 self.exec_pos = np.max([self.exec_pos, self.to_idx(self.Abar_p) - 10])
 
-            r = self.rho(self.R, self.m)
             # when density perturbation enters the cosmic horizon
-            #if(self.delta ==-1 and np.interp( np.exp(self.xi), self.Abar, r) < 1):
             if(self.delta == -1):
-                pos = np.abs((self.Abar*self.R - 1/np.exp((self.alpha-1) * self.xi))).argmin()
-                if(r[pos] < 1):
-                    #self.delta = np.interp( np.exp(self.xi), self.Abar, self.m) - 1
-                    self.delta = self.m[pos] - 1
+                r = self.rho(self.R, self.m)
+                pos = zero_crossing(self.Abar, (self.Abar - 1/np.exp((self.alpha-1) * self.xi) / self.R))
+                if(pos > 0 and np.interp(pos, self.Abar, r) < 1):
+                    self.delta = np.interp(pos, self.Abar, self.m) - 1
 
             exec_arr = np.concatenate(([0] * (self.exec_pos+1),[1] * (self.N - self.exec_pos - 1)))
 
@@ -222,8 +220,6 @@ class MS:
                 self.exec_pos = np.max([self.exec_pos, self.to_idx(self.Abar_p) - 10])
             exec_arr = np.concatenate(([0] * (self.exec_pos+1),[1] * (self.N - self.exec_pos - 1)))
 
-            #if(self.delta ==-1 and np.interp(np.exp(self.xi), self.Abar, r) < 1):
-            #    self.delta = np.interp(np.exp(self.xi), self.Abar, self.m) - 1
             if(self.delta == -1):
                 r = self.rho(self.R, self.m)
                 pos = zero_crossing(self.Abar, (self.Abar - 1/np.exp((self.alpha-1) * self.xi) / self.R))
