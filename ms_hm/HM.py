@@ -250,8 +250,9 @@ class HM:
         m = self.m
         U = self.U
 
-        if( (R**2 * m * self.Abar**2 * np.exp(2*(self.alpha-1)*xi)).max()
-           < self.mOverR):
+        mOverR = (R**2 * m * self.Abar**2 * np.exp(2*(self.alpha-1)*xi))
+
+        if(mOverR.max() < self.mOverR):
             print('2m/R is less than the threshold, no BH forms!')
             return -1
 
@@ -274,7 +275,22 @@ class HM:
         rho_b = a**(1+self.w)
         Rb = a * self.A
 
-        return ( (np.exp(-self.xi/2) * self.R **3 * self.Abar**3 * self.m ) / 2 )[pos]
+        return (( (np.exp(-self.xi/2) * self.R **3 * self.Abar**3 * self.m ) / 2 )[pos])
+
+    def BH_mass2(self):
+        xi = self.xi
+        R = self.R
+        m = self.m
+        U = self.U
+
+        mOverR = (R**2 * m * self.Abar**2 * np.exp(2*(self.alpha-1)*xi))
+
+        if(mOverR.max() < self.mOverR):
+            print('2m/R is less than the threshold, no BH forms!')
+            return -1
+
+        return (( (np.exp(-self.xi/2) * self.R **3 * self.Abar**3 * self.m ) / 2 )[mOverR.argmax()])
+
 
     def cfl_deltau(self,R, m, U, xi):
         xiprime = dfdA(xi, self.Abar, 1e100)
