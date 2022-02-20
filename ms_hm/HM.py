@@ -285,9 +285,6 @@ class HM:
 
         mOverR = (R**2 * m * self.Abar**2 * np.exp(2*(self.alpha-1)*xi))
 
-        if(mOverR.max() < self.mOverR):
-            print('2m/R is less than the threshold, no BH forms!')
-            return -1
 
         return (( (np.exp(-self.xi/2) * self.R **3 * self.Abar**3 * self.m ) / 2 )[mOverR.argmax()])
 
