@@ -161,7 +161,7 @@ class HM:
                 break
             if((self.R**2 * self.m * self.Abar**2 * np.exp(2*(self.alpha-1)*self.xi)).max() > self.mOverR):
                 print('2m/R is larger than ' + str(self.mOverR))
-                break
+                return 1
 
             kxi2, kR2, km2, kU2 = self.k_coeffs(self.R + deltau/2*kR1, self.m + deltau/2*km1,
                                                  self.U + deltau/2*kU1, self.xi + deltau/2*kxi1)
