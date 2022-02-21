@@ -156,7 +156,7 @@ class HM:
         kxi1, kR1, km1, kU1 = self.k_coeffs(self.R, self.m, self.U,  self.xi)
         while(step < n_steps) :
 
-            if (deltau < 1e-30):
+            if (deltau < 1e-10):
                 print("Warning, the time step is too small!")
                 break
             if((self.R**2 * self.m * self.Abar**2 * np.exp(2*(self.alpha-1)*self.xi)).max() > self.mOverR):
