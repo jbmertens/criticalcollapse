@@ -16,6 +16,8 @@ class HM:
         self.xi = MS.xi_hm
         self.N = MS.R_hm.shape[0]
 
+        self.sm_sigma = sm_sigma
+
         self.w = MS.w
         self.A = MS.A[:self.N]
         self.alpha = MS.alpha
@@ -42,7 +44,7 @@ class HM:
         self.deltau_adap = self.deltau_i
 
         self.mOverR = mOverR
-        self.sm_sigma = sm_sigma
+
         return
     # convert to half grid
     def to_stg(self,arr):
