@@ -59,7 +59,7 @@ class HM:
         temp = (g + self.Abar * R * U) / (g - (self.w + self.Q ) * self.Abar * R * U ) \
             * (m + self.Abar * R * hm_rho_term(R, m, self.Abar, xi, self.alpha) / 3)
         #temp = scipy.signal.savgol_filter(temp, 91, 3, mode='interp')
-        temp=gaussian_filter1d(temp, sigma = 8, mode='nearest')
+        temp=gaussian_filter1d(temp, sigma = 12, mode='nearest')
         return temp
 
     def rho_stg(self, R, m, U, xi, g, xiprime, Rprime, mprime):
