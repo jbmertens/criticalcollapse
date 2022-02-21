@@ -9,7 +9,7 @@ from ms_hm.utils import *
 
 class HM:
 
-    def __init__(self, MS, mOverR=0.99):
+    def __init__(self, MS, mOverR=0.99, sm_sigma=5):
         self.R = MS.R_hm
         self.m = MS.m_hm
         self.U = MS.U_hm
@@ -42,6 +42,7 @@ class HM:
         self.deltau_adap = self.deltau_i
 
         self.mOverR = mOverR
+        self.sm_sigma = sm_sigma
         return
     # convert to half grid
     def to_stg(self,arr):
@@ -59,7 +60,7 @@ class HM:
         temp = (g + self.Abar * R * U) / (g - (self.w + self.Q ) * self.Abar * R * U ) \
             * (m + self.Abar * R * hm_rho_term(R, m, self.Abar, xi, self.alpha) / 3)
         #temp = scipy.signal.savgol_filter(temp, 91, 3, mode='interp')
-        temp=gaussian_filter1d(temp, sigma = 12, mode='nearest')
+        temp=gaussian_filter1d(temp, sigma = self.sm_sigma, mode='nearest')
         return temp
 
     def rho_stg(self, R, m, U, xi, g, xiprime, Rprime, mprime):
