@@ -120,11 +120,13 @@ class HM:
         g = self.gamma(R, m, U, xi)
         r = self.rho(R, m, U, xi, g, xiprime, Rprime, mprime)
         p = self.P(r)
-
+        Q = self.w*np.ones_like(p)
+        Qprime = dfdA (Q, self.Abar, 1e100)
         exi = np.exp(xi)
         ephi = self.ephi(R, U, g, xi, xiprime, Rprime)
         elambda = self.elambda(ephi, exi, xiprime)
         epsi = self.epsi(R, U, g, xi, r, ephi)
+        rb =  3 / (8*np.pi) * (elambda**(1/2) * dfdA(np.log(epsi), self.Abar,1e100))**2
 
 
         drho = self.drho(R, m, U, g, xi, Rprime, mprime, xiprime)
@@ -136,14 +138,14 @@ class HM:
 
         kR = epsi / exi * R * (U - 1/ephi)
 
-        km = 3 * epsi / exi * (1/ephi * m * (1+self.w) - U * (p +m))
+        km = 3 * epsi / exi * (1/ephi * m - U * (p +m))
 
-        kU = - epsi / exi / (1 - self.w - self.Q) * (
+        kU = - epsi / exi / (1 - self.Q) * (
             (m + 3 * p) / 2 + U**2 - U / self.alpha / ephi
-        + (self.w + self.Q) * exi / elambda * Uprime + g * (self.w + self.Q) / ( np.concatenate( ([1], self.Abar[1:]) ) \
-                                                                                * R * (1+self.w + self.Q)) * (
-            3 * self.Q * U + exi * (self.Qprime / elambda - self.Q_du / epsi) / (self.w + self.Q)
-         + 3 * (1 + self.w) * (U - 1 / ephi) + exi / elambda * drho / r) )
+        + (Q) * exi / elambda * Uprime + g * (Q) / ( np.concatenate( ([1], self.Abar[1:]) ) \
+                                                                                * R * (1 + Q)) * (
+            3 * Q * U + exi * (Qprime / elambda - self.Q_du / epsi) / (Q)
+         + 3 * (1) * (U - 1 / ephi) + exi / elambda * drho / r) )
 
         # boundary conditions
         kxi[0] = epsi[0] / elambda[0] * (xi[1] - xi[0]) / ( (self.Abar[1] - self.Abar[0]) )
@@ -222,8 +224,9 @@ class HM:
             #der_U = dfdA(np.exp(self.xi * (self.alpha-1)) * self.Abar * self.R * self.U , self.Abar, 1e100)
 
             #self.Q = self.kappa * (self.Abar[1])**2 * der_U**2
+            Q = self.w*np.ones_like(p)
             #self.Qprime = dfdA(self.Q , self.Abar, 1e100)
-            #self.Q_du = (self.Q - self.Q_old) / deltau
+            self.Q_du = (Q - self.Q_old) / deltau
 
             #self.Q[der_U > 0] = 0
             #self.Qprime[der_U>0] = 0
@@ -242,7 +245,7 @@ class HM:
             self.m = self.m + (deltau/6*(km1 + 2*km2 + 2*km3 + km4))
             self.U = self.U + (deltau/6*(kU1 + 2*kU2 + 2*kU3 + kU4))
 
-            self.Q_old = self.Q
+            self.Q_old = Q
 
             step+=1
             self.u += deltau
