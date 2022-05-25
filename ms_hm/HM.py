@@ -120,7 +120,7 @@ class HM:
         g = self.gamma(R, m, U, xi)
         r = self.rho(R, m, U, xi, g, xiprime, Rprime, mprime)
         p = self.P(r)
-        Q = self.w*np.ones_like(p)
+        Q = p / r
         Qprime = dfdA (Q, self.Abar, 1e100)
         exi = np.exp(xi)
         ephi = self.ephi(R, U, g, xi, xiprime, Rprime)
