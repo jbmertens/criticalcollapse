@@ -2,6 +2,7 @@ import sys
 import numpy as np
 import scipy.integrate as integ
 import scipy.interpolate as interp
+import matplotlib.pyplot as plt
 
 from ms_hm.utils import *
 
@@ -115,7 +116,7 @@ class MS:
         else:
             return False
 
-    def run_steps(self,n_steps, exc_intv=0) :
+    def run_steps(self,n_steps, exc_intv=0, plot_interval=100000) :
         step = 0
 
         deltau = self.deltau_i
@@ -125,7 +126,11 @@ class MS:
             print('Not Tracing ray and NO excision will be performed!')
 
         while(step < n_steps) :
-
+            if(n_steps % plot_interval == 0) :
+                #plt.plot(self.R, self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi))
+                #plt.plot(self.R)
+                #plt.plot(self.rho)
+                #plt.plot(self.m)
             if(self.BH_not_form() == True):
                 return -2
             if(self.to_idx(self.Abar_p) > 50 and self.to_idx(self.Abar_p) < self.N * 0.8):
