@@ -116,7 +116,7 @@ class MS:
         else:
             return False
 
-    def run_steps(self,n_steps, exc_intv=0, plot_interval=100000) :
+    def run_steps(self,n_steps, exc_intv=0, plot_interval=150000) :
         step = 0
 
         deltau = self.deltau_i
@@ -128,7 +128,8 @@ class MS:
         while(step < n_steps) :
             if(n_steps % plot_interval == 0) :
                 #plt.plot(self.R, self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi))
-                #plt.plot(self.R)
+                plt.plot(self.R)
+                plt.show()
                 #plt.plot(self.rho)
                 #plt.plot(self.m)
             if(self.BH_not_form() == True):
