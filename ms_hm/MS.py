@@ -3,7 +3,6 @@ import numpy as np
 import scipy.integrate as integ
 import scipy.interpolate as interp
 import matplotlib.pyplot as plt
-import pandas as pd
 
 from ms_hm.utils import *
 
@@ -218,8 +217,9 @@ class MS:
             if(n_steps % plot_interval == 0) :
                 #plt.plot(self.R, self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi))
                 plt.plot(self.R)
-            #if nan then print number and break (once this works, plot and print all fields @faulty step to see where the problem 
-            if(pd.isna(self.psi) == True):
+            #if nan then print number and break (once this works, plot and print all fields @faulty step to see where the problem
+            hasnan = np.isnan(self.R).any()
+            if(hasnan == True):
                 print(step)  
                 break
             if(self.BH_not_form() == True):
