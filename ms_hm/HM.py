@@ -9,7 +9,7 @@ from ms_hm.utils import *
 
 class HM:
 
-    def __init__(self, MS, mOverR=0.99, sm_sigma=5):
+    def __init__(self, MS, mOverR=0.999, sm_sigma=5):
         self.R = MS.R_hm
         self.m = MS.m_hm
         self.U = MS.U_hm

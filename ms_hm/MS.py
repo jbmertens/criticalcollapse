@@ -3,6 +3,7 @@ import numpy as np
 import scipy.integrate as integ
 import scipy.interpolate as interp
 import matplotlib.pyplot as plt
+from scipy.ndimage import gaussian_filter1d
 
 from ms_hm.utils import *
 
@@ -71,7 +72,9 @@ class MS:
     def P(self, rho) :
         return self.w * rho
     def rho(self, R, m):
-        return m + ms_rho_term(R, m, self.Abar)
+        temp = m + ms_rho_term(R, m, self.Abar)
+        temp=gaussian_filter1d(temp, sigma = 15, mode='nearest')
+        return temp
 
     def psi(self, rho, p, Pprime):
         #return np.log(rho ** (-3 * self.alpha * self.w / 2))
@@ -92,7 +95,6 @@ class MS:
 
         Pprime = self.Pprime(R, m)
         ep = np.exp(self.psi(r, p, Pprime))
-        #print(g,r,p,ep)
         kR = self.alpha * R * (U * ep - 1)
         km = 2 * m - 3 * self.alpha * U * ep * (p + m)
 
@@ -118,7 +120,7 @@ class MS:
 
     def run_steps(self,n_steps, exc_intv=0, plot_interval=150000) :
         step = 0
-
+        
         deltau = self.deltau_i
         if(self.trace_ray == True):
             print("Tracing ray is enabled and excision will be performed!")
@@ -126,12 +128,10 @@ class MS:
             print('Not Tracing ray and NO excision will be performed!')
 
         while(step < n_steps) :
-            if(n_steps % plot_interval == 0) :
-                #plt.plot(self.R, self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi))
-                plt.plot(self.R)
-                #plt.show()
-                #plt.plot(self.rho)
-                #plt.plot(self.m)
+            if(step == 2573) :
+                #plt.plot(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi))
+                r = self.rho(self.R, self.m)
+                plt.plot(r)
             if(self.BH_not_form() == True):
                 return -2
             if(self.to_idx(self.Abar_p) > 50 and self.to_idx(self.Abar_p) < self.N * 0.8):
@@ -175,6 +175,7 @@ class MS:
                 diff = idx_p_new - self.to_idx(self.Abar_p)
                 if (diff > 1): ##move across more than two grid pints!
                     print('Warning!' + str(self.Abar_p) + ' ' + str(Abar_p_new))
+                    print("Code stopped running on step", step)
                     return 2
                 if ( diff > 0): # move across one grid point
                     interp_w = (self.Abar[idx_p_new] - self.Abar_p) / (Abar_p_new - self.Abar_p)
@@ -214,14 +215,13 @@ class MS:
 
 
         while(step < n_steps):
-            if(n_steps % plot_interval == 0) :
-                #plt.plot(self.R, self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi))
-                plt.plot(self.R)
+            if(step % 200 == 0) :
+                plt.plot(np.sqrt(np.exp(2 * (1 - self.alpha) * self.xi)))
             #if nan then print number and break (once this works, plot and print all fields @faulty step to see where the problem
-            hasnan = np.isnan(self.R).any()
-            if(hasnan == True):
-                print(step)  
-                break
+#             hasnan = np.isnan(self.R).any()
+#             if(hasnan == True):
+#                 print("nan detected, stopping at", step)  
+#                 break
             if(self.BH_not_form() == True):
                 return -2
 
