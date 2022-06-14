@@ -10,7 +10,8 @@ from ms_hm.utils import *
 class MS:
 
     def __init__(self, R, m, U, w, alpha, A, rho0,
-                 trace_ray=False, BH_threshold=1, dt_frac=0.05):
+                 trace_ray=False, BH_threshold=1, dt_frac=0.05, sm_sigma=15,
+                 plot_interval=200):
         self.R = R
         self.m = m
         self.U = U
@@ -21,6 +22,9 @@ class MS:
         self.N = R.shape[0]
         self.exec_pos = -1
 
+        self.sm_sigma = sm_sigma
+
+        self.plot_interval = plot_interval
 
         self.t0 = self.alpha * np.sqrt(3 / (8*np.pi*rho0))
         self.t = self.t0
@@ -57,44 +61,69 @@ class MS:
         self.BH_threshold = BH_threshold
         self.delta = -1
 
+        self.step = 0
+
     # convert to half grid
     def to_stg(self,arr):
         return (arr[0:-1] + arr[1:]) / 2
+    
     def to_cubic_stg(self,arr):
         a1 = arr[0:-1] ** 3
         a2 = arr[1:] ** 3
         return (a1 + a2) / (np.abs(a1 + a2)) * ( np.abs(a1 + a2)/ 2) **(1/3)
+    
     def to_idx(self, pos):
         return np.searchsorted(self.Abar, pos, "right") - 1
+
     def gamma(self, R, m, U, xi):
         return np.sqrt(np.exp(2 * (1 - self.alpha) * xi)
                        + (self.Abar * R)**2 * (U**2 - m))
     def P(self, rho) :
         return self.w * rho
+
     def rho(self, R, m):
         temp = m + ms_rho_term(R, m, self.Abar)
-        temp=gaussian_filter1d(temp, sigma = 15, mode='nearest')
+        temp=gaussian_filter1d(temp, sigma = self.sm_sigma, mode='nearest')
         return temp
 
     def psi(self, rho, p, Pprime):
-        #return np.log(rho ** (-3 * self.alpha * self.w / 2))
         offset = + np.log(rho[-1]**(-3 * self.alpha * self.w / 2))
-        return inv_derv_phi(rho, p, offset)
+        psi = inv_derv_phi(rho, p, offset)
+        if (psi>100).any() :
+            raise ValueError("Large psi detected!")
+        return psi
 
-    def Pprime(self, R, m):
-        R_stg = self.to_stg(R)
-        m_stg = self.to_stg(m)
-        rho_stg = m_stg + ms_rho_term_stg(R, m, self.Abar, R_stg, self.Abar_stg)
-        return self.w * np.concatenate( ([0], stg_dfdA(rho_stg, self.Abar_stg) ,[0] ))
+    def Pprime(self, p):
+        """
+        Return spatial derivative of the pressure field
+        """
+        
+        # "normal" derivative expression:
+        dPdAbar = self.RH * dfdA(p, self.Abar, 0, self.exec_pos)
+        
+        # "handed" derivative expression:
+        # dPdAbar = self.RH * np.concatenate( ([0], stg_dfdA(p, self.Abar_stg), [0]))
 
+        # Yet another expression?
+        # prefactor = ... ( (4g)/(3h) - 1 )
+        # R_stg = self.to_stg(self.R)
+        # m_stg = self.to_stg(self.m)
+        # rho_stg = m_stg + ms_rho_term_stg(self.R, self.m, self.Abar, R_stg, self.Abar_stg)
+        # dPdAbar = prefactor * np.concatenate( ([0], stg_dfdA(rho_stg, self.Abar_stg) , [0] ))
+
+        return dPdAbar 
 
     def k_coeffs(self, R, m, U, Abar_p, xi) :
+        """
+        Compute Runge-Kutta "k" coefficients
+        """
         g = self.gamma(R, m, U, xi)
         r = self.rho(R, m)
         p = self.P(r)
 
-        Pprime = self.Pprime(R, m)
+        Pprime = self.Pprime(p)
         ep = np.exp(self.psi(r, p, Pprime))
+
         kR = self.alpha * R * (U * ep - 1)
         km = 2 * m - 3 * self.alpha * U * ep * (p + m)
 
@@ -106,35 +135,86 @@ class MS:
              (self.Abar[1:]) ))  / (R * (AR_prime) * (r + p))
             + (2 * U**2 + m + 3 * p) / 2)
 
-        #kA_p = self.alpha * interp.griddata(self.Abar, ep * g / AR_prime,
-        #                                    Abar_p, method='cubic')
         kA_p = self.alpha * np.interp(Abar_p,self.Abar, ep * g / AR_prime)
+
         return kR, km, kU, kA_p
 
-    # tell if BH will NOT form
-    def BH_not_form(self):
+    def BH_wont_form(self):
+        """
+        Check to see if a BH will NOT form.
+        A zero or negative mass at the origin indicates some outflow or
+        other error, so a BH won't form in the remainder of the run.
+        """
         if(self.m[0] < self.BH_threshold):
+            print("Mass near origin is negative, so a black hole likely won't be forming!")
+            print("Nearby mass values were", self.m[:10])
+            print("Nearby velocity values were", self.U[:10])
+            print("This occurred at step", self.step)
+            self.plot_fields(force_plot=True)
             return True
         else:
             return False
 
-    def run_steps(self,n_steps, exc_intv=0, plot_interval=150000) :
-        step = 0
+    def plot_fields(self, force_plot=False) :
+        """
+        Plot things every so often (according to the self.plot_interval class variable value),
+        or if force_plot is true (force this function to plot)
+        """
+        if (self.step % self.plot_interval == 0) or force_plot :
+            # First figure shows m
+            plt.figure(1)
+            plt.semilogy(self.m)
+            plt.title("Mass m")
+
+            # Second figure shows rho
+            plt.figure(2)
+            r = self.rho(self.R, self.m)
+            plt.semilogy(r)
+            plt.title("Density rho")
+
+        # Plot additional fields if force_plot is true
+        if force_plot :
+            plt.figure(3)
+
+            a = np.exp(self.alpha * self.xi)
+            H = np.exp(-self.xi) / self.RH
+
+            g = self.gamma(self.R, self.m, self.U, self.xi)
+            r = self.rho(self.R, self.m)
+            p = self.P(r)
+            Pprime = self.Pprime(p)
+            psi = self.psi(r, p, Pprime)
+
+            plt.semilogy(self.A, self.U, c='b', label='Velocity U')
+            plt.semilogy(self.A, -self.U, c='b', ls=':') # plot negative U values dashed
+            plt.semilogy(self.A, r, c='g', label='Density, rho')
+            plt.semilogy(self.A, -r, c='g', ls=':') # plot negative rho values dashed
+            plt.semilogy(self.A, self.m, c='r', label='Mass, m')
+            plt.semilogy(self.A, -self.m, c='r', ls=':') # plot negative mass values dashed
+            plt.semilogy(self.A, psi, c='c', label="Metric factor psi")
+            plt.semilogy(self.A, -psi, c='c', ls=':')
+            plt.legend()
+
+
+    def run_steps(self, n_steps, exc_intv=0) :
+        """
         
+        """        
         deltau = self.deltau_i
         if(self.trace_ray == True):
             print("Tracing ray is enabled and excision will be performed!")
         else:
             print('Not Tracing ray and NO excision will be performed!')
 
-        while(step < n_steps) :
-            if(step%200==0) :
-                plt.plot(self.m)
-                plt.ylim(-1,10)
-                 #r = self.rho(self.R, self.m)
-                 #plt.plot(r)
-#             if(self.BH_not_form() == True):
-#                 return -2
+        while(self.step < n_steps) :
+
+            # Plot things every so often
+            self.plot_fields()
+            
+            # Stop running if it becomes clear a BH won't form
+            if(self.BH_wont_form() == True):
+                return -2
+            
             if(self.to_idx(self.Abar_p) > 50 and self.to_idx(self.Abar_p) < self.N * 0.8):
                 self.exec_pos = np.max([self.exec_pos, self.to_idx(self.Abar_p) - 10])
 
@@ -165,9 +245,6 @@ class MS:
             if(self.trace_ray == True):
                 Abar_p_new = self.Abar_p + deltau/6*(kA_p1 + 2*kA_p2 + 2*kA_p3 + kA_p4)
                 idx_p_new = self.to_idx(Abar_p_new)
-                #U_p_new = interp.griddata(self.Abar, self.U, Abar_p_new, method='cubic')
-                #m_p_new = interp.griddata(self.Abar, self.m, Abar_p_new, method='cubic')
-                #R_p_new = interp.griddata(self.Abar, self.R, Abar_p_new, method='cubic')
 
                 U_p_new = np.interp(Abar_p_new, self.Abar, self.U)
                 m_p_new = np.interp(Abar_p_new, self.Abar, self.m)
@@ -176,7 +253,7 @@ class MS:
                 diff = idx_p_new - self.to_idx(self.Abar_p)
                 if (diff > 1): ##move across more than two grid pints!
                     print('Warning!' + str(self.Abar_p) + ' ' + str(Abar_p_new))
-                    print("Code stopped running on step", step)
+                    print("Code stopped running on step", self.step)
                     return 2
                 if ( diff > 0): # move across one grid point
                     interp_w = (self.Abar[idx_p_new] - self.Abar_p) / (Abar_p_new - self.Abar_p)
@@ -196,17 +273,19 @@ class MS:
                     print("Photon has gone out of the outter boundary!")
                     return 0
 
-            step+=1
+            self.step += 1
             self.xi += deltau
 
-            if(step % 10 == 0):
+            if(self.step % 10 == 0):
                 if(find_exec_pos(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)) > 0):
                     print("Horizon is found, code will be terminated!")
                     return -1
 
+        self.plot_fields(force_plot=True)
 
-    def adap_run_steps(self,n_steps, adjust_steps=100, tol=1e-7, plot_interval=150000) :
-        step = 0
+
+    def adap_run_steps(self, n_steps, adjust_steps=100, tol=1e-7) :
+
         deltau = self.deltau_adap
 
         if(self.trace_ray == True):
@@ -215,20 +294,17 @@ class MS:
             print('Not Tracing ray and NO excision will be performed!')
 
 
-        while(step < n_steps):
-            if(step % 200 == 0) :
-                #plt.plot(np.sqrt(np.exp(2 * (1 - self.alpha) * self.xi)))
-                plt.semilogy(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi))
-            #if nan then print number and break (once this works, plot and print all fields @faulty step to see where the problem
-#             hasnan = np.isnan(self.R).any()
-#             if(hasnan == True):
-#                 print("nan detected, stopping at", step)  
-#                 break
-            if(self.BH_not_form() == True):
+        while(self.step < n_steps):
+
+            # Plot things every so often
+            self.plot_fields()
+
+            # Stop running if it becomes clear a BH won't form.
+            if(self.BH_wont_form() == True):
                 return -2
 
             if (deltau < 1e-9):
-                print("Warning, the time step is too small!")
+                print("Warning, the time step is too small! Stopping run.")
                 return 1
 
             if(self.to_idx(self.Abar_p) > 50 and self.to_idx(self.Abar_p) < self.N * 0.8):
@@ -307,7 +383,7 @@ class MS:
                 kU1 = kU4.copy()
                 kA_p1 = kA_p4
 
-                step+=1
+                self.step += 1
                 self.xi += deltau
                 if(idx_p_new == self.N-2): #going out of the boundary
                     print("Photon has gone out of the outter boundary")
@@ -325,10 +401,12 @@ class MS:
 
             self.deltau_adap = deltau
 
-            if(step % 10 == 0):
+            if(self.step % 10 == 0):
                 if(find_exec_pos(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)) > 0):
                     print("Horizon is found, code will be terminated!")
                     return -1
+
+        self.plot_fields(force_plot=True)
 
 
     def cfl_deltau(self,R, m, U):
@@ -339,7 +417,7 @@ class MS:
         r = self.rho(R, m)
         p = self.P(r)
 
-        Pprime = self.Pprime(R, m)
+        Pprime = self.Pprime(p)
 
         ep = np.exp(self.psi(r, p, Pprime))
         el =  (dfdA(a * self.A * self.R, self.Abar, 1) / self.RH) /(a * H * self.RH * g)

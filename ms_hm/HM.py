@@ -105,8 +105,6 @@ class HM:
         return np.concatenate( ([0], stg_dfdA(rho_stg, self.to_stg(self.Abar)) ,[0]) )
 
 
-
-
     def k_coeffs(self, R, m, U, xi) :
         xiprime = WENO_dfdA(xi, self.Abar, 1e100)
         Rprime = WENO_dfdA(R, self.Abar, 1e100)
@@ -157,7 +155,9 @@ class HM:
         return kxi, kR, km, kU
 
     def adap_run_steps(self,n_steps, adj_intv=-1, tol=1e-7) :
+
         step = 0
+
         deltau = self.deltau_adap
         kxi1, kR1, km1, kU1 = self.k_coeffs(self.R, self.m, self.U,  self.xi)
         while(step < n_steps) :
