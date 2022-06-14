@@ -13,4 +13,4 @@ setup(ext_modules=cythonize([
         include_dirs=[numpy.get_include()]
     )
 ],
-                            language_level=3))
+language_level=3))
