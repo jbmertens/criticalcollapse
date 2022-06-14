@@ -1,6 +1,7 @@
 import sys
 import numpy as np
 import scipy
+import matplotlib.pyplot as plt
 from scipy import signal
 from scipy.ndimage import gaussian_filter1d
 
@@ -160,7 +161,9 @@ class HM:
         deltau = self.deltau_adap
         kxi1, kR1, km1, kU1 = self.k_coeffs(self.R, self.m, self.U,  self.xi)
         while(step < n_steps) :
-
+            if(step % 200 == 0) :
+                #plt.plot(np.sqrt(np.exp(2 * (1 - self.alpha) * self.xi)))
+                plt.semilogy(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi))
             if (deltau < 1e-10):
                 print("Warning, the time step is too small!")
                 break

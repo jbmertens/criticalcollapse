@@ -128,12 +128,13 @@ class MS:
             print('Not Tracing ray and NO excision will be performed!')
 
         while(step < n_steps) :
-            if(step == 2573) :
-                #plt.plot(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi))
-                r = self.rho(self.R, self.m)
-                plt.plot(r)
-            if(self.BH_not_form() == True):
-                return -2
+            if(step%200==0) :
+                plt.plot(self.m)
+                plt.ylim(-1,10)
+                 #r = self.rho(self.R, self.m)
+                 #plt.plot(r)
+#             if(self.BH_not_form() == True):
+#                 return -2
             if(self.to_idx(self.Abar_p) > 50 and self.to_idx(self.Abar_p) < self.N * 0.8):
                 self.exec_pos = np.max([self.exec_pos, self.to_idx(self.Abar_p) - 10])
 
@@ -216,7 +217,8 @@ class MS:
 
         while(step < n_steps):
             if(step % 200 == 0) :
-                plt.plot(np.sqrt(np.exp(2 * (1 - self.alpha) * self.xi)))
+                #plt.plot(np.sqrt(np.exp(2 * (1 - self.alpha) * self.xi)))
+                plt.semilogy(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi))
             #if nan then print number and break (once this works, plot and print all fields @faulty step to see where the problem
 #             hasnan = np.isnan(self.R).any()
 #             if(hasnan == True):
