@@ -171,6 +171,34 @@ class MS:
             r = self.rho(self.R, self.m)
             plt.semilogy(self.A, r)
             plt.title("Density rho")
+            
+            #Third figure shows R
+            plt.figure(3)
+            plt.semilogy(self.R)
+            plt.title("R")
+            
+            #Fourth figure shows 2m/R
+            plt.figure(4)
+            plt.semilogy(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi))
+            plt.title("2m/R")
+            
+            #Fifth figure shows Pprime
+            plt.figure(5)
+            Pprime = self.Pprime(self.P(r))
+            plt.plot(Pprime)
+            plt.title("Pprime")
+            
+            #Sixth figure shows P
+            plt.figure(6)
+            p = self.P(self.rho(self.R, self.m))
+            plt.semilogy(p)
+            plt.title("P")
+            
+            #Seventh figure shows psi
+            plt.figure(7)
+            psi = self.psi(r, p, Pprime)
+            plt.semilogy(psi)
+            plt.title("psi")
 
             plt.figure(4)
             two_m_over_R = self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)
@@ -182,7 +210,7 @@ class MS:
 
         # Plot additional fields if force_plot is true
         if force_plot :
-            plt.figure(3)
+            plt.figure(8)
 
             a = np.exp(self.alpha * self.xi)
             H = np.exp(-self.xi) / self.RH

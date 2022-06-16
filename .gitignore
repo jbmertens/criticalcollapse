@@ -160,6 +160,8 @@ cython_debug/
 #.idea/
 
 ms_hm/cython/utils.c
+ms_hm/penmp
+.DS_Store
 
 ms_hm/__pycache__/*
 ms_hm/build/*
