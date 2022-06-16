@@ -161,3 +161,7 @@ cython_debug/
 
 ms_hm/cython/utils.c
 
+ms_hm/__pycache__/*
+ms_hm/build/*
+ms_hm/cython/utils.c
+ms_hm/utils.cpython*

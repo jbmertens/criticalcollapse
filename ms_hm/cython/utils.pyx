@@ -171,12 +171,14 @@ cpdef ms_rho_term(np.ndarray R_in, double [:] m, double [:] A):
     cdef double [:] res =  np.zeros(size, dtype=np.double)
     cdef double [:] R = R_in
     cdef int i
+    # expression on interior of grid
     for i in prange(1, size - 1,nogil=True):
         res[i] = A[i] * R[i] * (m[i+1] - m[i-1]) \
                 / (3 * (A[i+1] * R[i+1] - A[i-1] * R[i-1]))
+    # expression at origin
     i = 0
-    res[i] = A[i] * R[i] * (m[i+1] - m[i]) \
-                / (3 * (A[i+1] * R[i+1] - A[i] * R[i]))
+    res[i] = 0
+    # expression at outer boundary
     i = size - 1
     res[i] = A[i] * R[i] * (m[i] - m[i-1]) \
                 / (3 * (A[i] * R[i] - A[i-1] * R[i-1]))

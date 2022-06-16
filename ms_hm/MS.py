@@ -83,14 +83,14 @@ class MS:
 
     def rho(self, R, m):
         temp = m + ms_rho_term(R, m, self.Abar)
-        temp=gaussian_filter1d(temp, sigma = self.sm_sigma, mode='nearest')
+        temp = gaussian_filter1d(temp, sigma=self.sm_sigma, mode='nearest')
         return temp
 
     def psi(self, rho, p, Pprime):
         offset = + np.log(rho[-1]**(-3 * self.alpha * self.w / 2))
         psi = inv_derv_phi(rho, p, offset)
         if (psi>100).any() :
-            raise ValueError("Large psi detected!")
+            raise ValueError("Large psi detected at step "+str(self.step)+"!")
         return psi
 
     def Pprime(self, p):
@@ -99,17 +99,17 @@ class MS:
         """
         
         # "normal" derivative expression:
-        dPdAbar = self.RH * dfdA(p, self.Abar, 0, self.exec_pos)
+        # dPdAbar = self.RH * dfdA(p, self.Abar, 0, self.exec_pos)
         
         # "handed" derivative expression:
         # dPdAbar = self.RH * np.concatenate( ([0], stg_dfdA(p, self.Abar_stg), [0]))
 
         # Yet another expression?
-        # prefactor = ... ( (4g)/(3h) - 1 )
-        # R_stg = self.to_stg(self.R)
-        # m_stg = self.to_stg(self.m)
-        # rho_stg = m_stg + ms_rho_term_stg(self.R, self.m, self.Abar, R_stg, self.Abar_stg)
-        # dPdAbar = prefactor * np.concatenate( ([0], stg_dfdA(rho_stg, self.Abar_stg) , [0] ))
+        prefactor = self.w # ... ( (4g)/(3h) - 1 )
+        R_stg = self.to_stg(self.R)
+        m_stg = self.to_stg(self.m)
+        rho_stg = m_stg + ms_rho_term_stg(self.R, self.m, self.Abar, R_stg, self.Abar_stg)
+        dPdAbar = prefactor * np.concatenate( ([0], stg_dfdA(rho_stg, self.Abar_stg) , [0] ))
 
         return dPdAbar 
 
@@ -130,12 +130,12 @@ class MS:
         AR_prime = R + self.Abar * dfdA(R, self.Abar, 0, self.exec_pos)
 
         kU = U - self.alpha * ep * \
-            (   g**2 * np.concatenate( ([self.w
-                            * ((m[1] + m[1] - 2 * m[0]) /( self.Abar[1]**2)) *  (1**2 * 5/3)] ,Pprime[1:] /
-             (self.Abar[1:]) ))  / (R * (AR_prime) * (r + p))
-            + (2 * U**2 + m + 3 * p) / 2)
+            (   g**2 * np.concatenate( (
+                    [ (p[1] + p[1] - 2 * p[0])/self.Abar[1]**2 ] ,
+                    Pprime[1:] / (self.Abar[1:])
+            )) / (R * (AR_prime) * (r + p))  + (2 * U**2 + m + 3 * p) / 2)
 
-        kA_p = self.alpha * np.interp(Abar_p,self.Abar, ep * g / AR_prime)
+        kA_p = self.alpha * np.interp(Abar_p, self.Abar, ep * g / AR_prime)
 
         return kR, km, kU, kA_p
 
@@ -163,14 +163,22 @@ class MS:
         if (self.step % self.plot_interval == 0) or force_plot :
             # First figure shows m
             plt.figure(1)
-            plt.semilogy(self.m)
+            plt.semilogy(self.A, self.m)
             plt.title("Mass m")
 
             # Second figure shows rho
             plt.figure(2)
             r = self.rho(self.R, self.m)
-            plt.semilogy(r)
+            plt.semilogy(self.A, r)
             plt.title("Density rho")
+
+            plt.figure(4)
+            two_m_over_R = self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)
+            plt.semilogy(self.A, two_m_over_R)
+            plt.hlines(1, 0, np.max(self.A), 'k')
+            plt.ylim(10**-1, 10**2)
+            plt.title("2m/R")
+
 
         # Plot additional fields if force_plot is true
         if force_plot :
@@ -183,7 +191,8 @@ class MS:
             r = self.rho(self.R, self.m)
             p = self.P(r)
             Pprime = self.Pprime(p)
-            psi = self.psi(r, p, Pprime)
+
+            two_m_over_R = self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)
 
             plt.semilogy(self.A, self.U, c='b', label='Velocity U')
             plt.semilogy(self.A, -self.U, c='b', ls=':') # plot negative U values dashed
@@ -191,15 +200,23 @@ class MS:
             plt.semilogy(self.A, -r, c='g', ls=':') # plot negative rho values dashed
             plt.semilogy(self.A, self.m, c='r', label='Mass, m')
             plt.semilogy(self.A, -self.m, c='r', ls=':') # plot negative mass values dashed
-            plt.semilogy(self.A, psi, c='c', label="Metric factor psi")
-            plt.semilogy(self.A, -psi, c='c', ls=':')
+            plt.semilogy(self.A, two_m_over_R, c='k', label='Horizon, 2m/R')
+            plt.semilogy(self.A, -two_m_over_R, c='k', ls=':') # plot negative mass values dashed
+
+            try :
+                psi = self.psi(r, p, Pprime)
+                plt.semilogy(self.A, psi, c='c', label="Metric factor psi")
+                plt.semilogy(self.A, -psi, c='c', ls=':')
+            except:
+                pass
+
             plt.legend()
 
 
     def run_steps(self, n_steps, exc_intv=0) :
         """
         
-        """        
+        """
         deltau = self.deltau_i
         if(self.trace_ray == True):
             print("Tracing ray is enabled and excision will be performed!")
@@ -278,7 +295,8 @@ class MS:
 
             if(self.step % 10 == 0):
                 if(find_exec_pos(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)) > 0):
-                    print("Horizon is found, code will be terminated!")
+                    print("Horizon was found at step", self.step, "! code will be terminated.")
+                    self.plot_fields(force_plot=True)
                     return -1
 
         self.plot_fields(force_plot=True)
@@ -403,7 +421,7 @@ class MS:
 
             if(self.step % 10 == 0):
                 if(find_exec_pos(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)) > 0):
-                    print("Horizon is found, code will be terminated!")
+                    print("Horizon is found, code will be terminated! Finished at step", self.step)
                     return -1
 
         self.plot_fields(force_plot=True)
