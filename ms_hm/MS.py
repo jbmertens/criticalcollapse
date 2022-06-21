@@ -16,36 +16,43 @@ class MS:
     https://arxiv.org/pdf/1504.02071.pdf .
     """
 
-    def __init__(self, R, m, U, w, alpha, A, rho0,
-                 trace_ray=False, BH_threshold=1, dt_frac=0.05, sm_sigma=15,
+    def __init__(self, Abar, R, m, U, rho0, qcd,
+                 trace_ray=False, BH_threshold=1, dt_frac=0.05, sm_sigma=1,
                  plot_interval=200):
+
+        # Initial coordinate grid & number of grid points
+        self.Abar = Abar
+        self.N = Abar.shape[0]
+
+        # Initial field values
         self.R = R
         self.m = m
         self.U = U
-        self.w = w
 
-        self.A = A
-        self.alpha = alpha
-        self.N = R.shape[0]
-        self.exec_pos = -1
-
-        self.sm_sigma = sm_sigma
-
-        self.plot_interval = plot_interval
-
+        # Equation of state & background information
+        self.qcd = qcd
+        self.w = qcd.P(rho0)/rho0
+        self.alpha = (2/3)/(1 + self.w)
         self.t0 = self.alpha * np.sqrt(3 / (8*np.pi*rho0))
         self.t = self.t0
-        self.xi = 0
-
         self.RH = self.t0 / self.alpha
-        self.Abar = self.A / self.RH
         self.Abar_stg = self.to_stg(self.Abar)
+        self.A = Abar * self.RH
+        print("Initial w is", self.w, "and Horizon radius is", self.RH)
 
+        # Plot steps every so often
+        self.plot_interval = plot_interval
+
+        # Stability & integration parameters and such
+        self.exec_pos = -1
+        self.sm_sigma = sm_sigma # smooth the density field if needed
+        self.xi = 0
         self.q = 1
         self.dt_frac = dt_frac
         self.deltau_i = self.cfl_deltau(self.R, self.m, self.U) * self.dt_frac
         self.deltau_adap = self.deltau_i
 
+        # Data to supply to a hernandez-misner run
         # initialize the poton
         self.trace_ray = trace_ray
         self.Abar_p = self.Abar[0]
@@ -87,6 +94,10 @@ class MS:
                        + (self.Abar * R)**2 * (U**2 - m) )
 
     def P(self, rho) :
+        # TODO: generalize/fix this to return the QCD pressure
+        # rho (which is really rhobar) -> to the actual rho,
+        # Compute self.qcd.P(actual rho)
+        # compute Pbar form P and return barP
         return self.w * rho
 
     def rho(self, R, m):
@@ -171,13 +182,13 @@ class MS:
         if (self.step % self.plot_interval == 0) or force_plot :
             # First figure shows m
             plt.figure(1)
-            plt.semilogy(self.A, self.m)
+            plt.semilogy(self.Abar, self.m)
             plt.title("Mass m")
 
             # Second figure shows rho
             plt.figure(2)
             r = self.rho(self.R, self.m)
-            plt.semilogy(self.A, r)
+            plt.semilogy(self.Abar, r)
             plt.title("Density rho")
             
             #Third figure shows R
@@ -210,8 +221,8 @@ class MS:
 
             plt.figure(4)
             two_m_over_R = self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)
-            plt.semilogy(self.A, two_m_over_R)
-            plt.hlines(1, 0, np.max(self.A), 'k')
+            plt.semilogy(self.Abar, two_m_over_R)
+            plt.hlines(1, 0, np.max(self.Abar), 'k')
             plt.ylim(10**-1, 10**2)
             plt.title("2m/R")
 
@@ -230,19 +241,19 @@ class MS:
 
             two_m_over_R = self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)
 
-            plt.semilogy(self.A, self.U, c='b', label='Velocity U')
-            plt.semilogy(self.A, -self.U, c='b', ls=':') # plot negative U values dashed
-            plt.semilogy(self.A, r, c='g', label='Density, rho')
-            plt.semilogy(self.A, -r, c='g', ls=':') # plot negative rho values dashed
-            plt.semilogy(self.A, self.m, c='r', label='Mass, m')
-            plt.semilogy(self.A, -self.m, c='r', ls=':') # plot negative mass values dashed
-            plt.semilogy(self.A, two_m_over_R, c='k', label='Horizon, 2m/R')
-            plt.semilogy(self.A, -two_m_over_R, c='k', ls=':') # plot negative mass values dashed
+            plt.semilogy(self.Abar, self.U, c='b', label='Velocity U')
+            plt.semilogy(self.Abar, -self.U, c='b', ls=':') # plot negative U values dashed
+            plt.semilogy(self.Abar, r, c='g', label='Density, rho')
+            plt.semilogy(self.Abar, -r, c='g', ls=':') # plot negative rho values dashed
+            plt.semilogy(self.Abar, self.m, c='r', label='Mass, m')
+            plt.semilogy(self.Abar, -self.m, c='r', ls=':') # plot negative mass values dashed
+            plt.semilogy(self.Abar, two_m_over_R, c='k', label='Horizon, 2m/R')
+            plt.semilogy(self.Abar, -two_m_over_R, c='k', ls=':') # plot negative mass values dashed
 
             try :
                 psi = self.psi(r, p, Pprime)
-                plt.semilogy(self.A, psi, c='c', label="Metric factor psi")
-                plt.semilogy(self.A, -psi, c='c', ls=':')
+                plt.semilogy(self.Abar, psi, c='c', label="Metric factor psi")
+                plt.semilogy(self.Abar, -psi, c='c', ls=':')
             except:
                 pass
 
