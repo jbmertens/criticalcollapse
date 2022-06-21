@@ -8,6 +8,13 @@ from scipy.ndimage import gaussian_filter1d
 from ms_hm.utils import *
 
 class MS:
+    """
+    Class to integrate the Misner-Sharp equations to study
+    critical collapse of a fluid to a black hole.
+
+    Equations integrated are 50a - 50f in
+    https://arxiv.org/pdf/1504.02071.pdf .
+    """
 
     def __init__(self, R, m, U, w, alpha, A, rho0,
                  trace_ray=False, BH_threshold=1, dt_frac=0.05, sm_sigma=15,
@@ -76,8 +83,9 @@ class MS:
         return np.searchsorted(self.Abar, pos, "right") - 1
 
     def gamma(self, R, m, U, xi):
-        return np.sqrt(np.exp(2 * (1 - self.alpha) * xi)
-                       + (self.Abar * R)**2 * (U**2 - m))
+        return np.sqrt( np.exp(2 * (1 - self.alpha) * xi)
+                       + (self.Abar * R)**2 * (U**2 - m) )
+
     def P(self, rho) :
         return self.w * rho
 
@@ -99,17 +107,17 @@ class MS:
         """
         
         # "normal" derivative expression:
-        # dPdAbar = self.RH * dfdA(p, self.Abar, 0, self.exec_pos)
+        dPdAbar = self.RH * dfdA(p, self.Abar, 0, self.exec_pos)
         
         # "handed" derivative expression:
         # dPdAbar = self.RH * np.concatenate( ([0], stg_dfdA(p, self.Abar_stg), [0]))
 
         # Yet another expression?
-        prefactor = self.w # ... ( (4g)/(3h) - 1 )
-        R_stg = self.to_stg(self.R)
-        m_stg = self.to_stg(self.m)
-        rho_stg = m_stg + ms_rho_term_stg(self.R, self.m, self.Abar, R_stg, self.Abar_stg)
-        dPdAbar = prefactor * np.concatenate( ([0], stg_dfdA(rho_stg, self.Abar_stg) , [0] ))
+        # prefactor = self.w # ... ( (4g)/(3h) - 1 )
+        # R_stg = self.to_stg(self.R)
+        # m_stg = self.to_stg(self.m)
+        # rho_stg = m_stg + ms_rho_term_stg(self.R, self.m, self.Abar, R_stg, self.Abar_stg)
+        # dPdAbar = prefactor * np.concatenate( ([0], stg_dfdA(rho_stg, self.Abar_stg) , [0] ))
 
         return dPdAbar 
 
@@ -249,7 +257,7 @@ class MS:
         if(self.trace_ray == True):
             print("Tracing ray is enabled and excision will be performed!")
         else:
-            print('Not Tracing ray and NO excision will be performed!')
+            print('Not tracing ray and NO excision will be performed!')
 
         while(self.step < n_steps) :
 
@@ -350,7 +358,8 @@ class MS:
                 return -2
 
             if (deltau < 1e-9):
-                print("Warning, the time step is too small! Stopping run.")
+                print("Warning, the time step is too small! Stopping run at step",
+                    self.step, "with timestep", deltau)
                 return 1
 
             if(self.to_idx(self.Abar_p) > 50 and self.to_idx(self.Abar_p) < self.N * 0.8):
@@ -432,13 +441,13 @@ class MS:
                 self.step += 1
                 self.xi += deltau
                 if(idx_p_new == self.N-2): #going out of the boundary
-                    print("Photon has gone out of the outter boundary")
+                    print("Photon has gone out of the outter boundary at step", self.step)
                     return 0
 
-            if( diff <=1):
+            if( diff <= 1 ):
                 # Adjust step size.
                 self.q = 0.8*np.min((max_err_R/E_R, max_err_m/E_m, max_err_U/E_U) )**(1/3)   # conservative optimal step factor
-                self.q = min(self.q,10)               # limit stepsize growth
+                self.q = min(self.q, 10)               # limit stepsize growth
                 deltau *= self.q
 
             else:
