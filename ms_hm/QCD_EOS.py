@@ -37,7 +37,7 @@ class QCD_EOS:
                 self.Pressure[i] = self.rho[i] / 3
         # Use polynomial interpolation and a spline
         # Probably want to generalize this so the function returns P = rho/3 outside of the tabulated range
-        self.P = interp.InterpolatedUnivariateSpline(self.rho, self.Pressure) #bbox = [1 / 3, 1 / 3], ext = 3
+        self.P = interp.InterpolatedUnivariateSpline(self.rho, self.Pressure, bbox = [self.rho[0],self.rho[15]]) #ext = 3 
 
         if init_plot :
             # For plotting purpose we generate a fine grid
