@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter1d
 
 from ms_hm.utils import *
+from ms_hm.QCD_EOS import *
 
 class MS:
     """
@@ -76,6 +77,8 @@ class MS:
         self.delta = -1
 
         self.step = 0
+        
+        
 
     # convert to half grid
     def to_stg(self,arr):
@@ -98,7 +101,11 @@ class MS:
         # rho (which is really rhobar) -> to the actual rho,
         # Compute self.qcd.P(actual rho)
         # compute Pbar form P and return barP
-        return self.w * rho
+        H = np.exp(-self.xi) / self.RH
+        rhob = (3 / (8*np.pi)) * H**2
+        realRho = rho * rhob
+        realP = (4/3/QCD_EOS().hoverg - 1) * realRho
+        return realP / rhob
 
     def rho(self, R, m):
         temp = m + ms_rho_term(R, m, self.Abar)
