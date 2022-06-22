@@ -17,7 +17,7 @@ class MS:
     https://arxiv.org/pdf/1504.02071.pdf .
     """
 
-    def __init__(self, Abar, R, m, U, rho0, qcd,
+    def __init__(self, Abar, rho0, amp,
                  trace_ray=False, BH_threshold=1, dt_frac=0.05, sm_sigma=1,
                  plot_interval=200):
 
@@ -25,14 +25,9 @@ class MS:
         self.Abar = Abar
         self.N = Abar.shape[0]
 
-        # Initial field values
-        self.R = R
-        self.m = m
-        self.U = U
-
         # Equation of state & background information
-        self.qcd = qcd
-        self.w = qcd.P(rho0)/rho0
+        self.qcd = QCD_EOS(init_plot=False)
+        self.w = self.qcd.P(rho0)/rho0
         self.alpha = (2/3)/(1 + self.w)
         self.t0 = self.alpha * np.sqrt(3 / (8*np.pi*rho0))
         self.t = self.t0
@@ -40,6 +35,13 @@ class MS:
         self.Abar_stg = self.to_stg(self.Abar)
         self.A = Abar * self.RH
         print("Initial w is", self.w, "and Horizon radius is", self.RH)
+
+        # Initial field values
+        delta0 = amp * np.exp(-Abar**2 / 2 /(1.6)**2)
+        delta0P = amp * delta0 * 2 * (-1 / 2 / (1.6)**2 ) * Abar
+        self.m = 1 + delta0
+        self.U = 1 - self.alpha * delta0 / 2
+        self.R = 1 - self.alpha / 2 * (delta0 + self.w * Abar * delta0P / (1 + 3 * self.w) )
 
         # Plot steps every so often
         self.plot_interval = plot_interval
@@ -97,15 +99,15 @@ class MS:
                        + (self.Abar * R)**2 * (U**2 - m) )
 
     def P(self, rho) :
-        # TODO: generalize/fix this to return the QCD pressure
-        # rho (which is really rhobar) -> to the actual rho,
-        # Compute self.qcd.P(actual rho)
-        # compute Pbar form P and return barP
+        """
+        Compute (tilded) pressure as a function of (tilded) density.
+        """
         H = np.exp(-self.xi) / self.RH
-        rhob = (3 / (8*np.pi)) * H**2
+        rhob = 3 / (8*np.pi) * H**2
         realRho = rho * rhob
-        realP = (4/3/QCD_EOS().hoverg - 1) * realRho
-        return realP / rhob
+        realP = self.qcd.P(realRho)
+        P = realP/rhob # really Ptilde
+        return P
 
     def rho(self, R, m):
         temp = m + ms_rho_term(R, m, self.Abar)
@@ -186,7 +188,7 @@ class MS:
         Plot things every so often (according to the self.plot_interval class variable value),
         or if force_plot is true (force this function to plot)
         """
-        if (self.step % self.plot_interval == 0) or force_plot :
+        if (self.step % self.plot_interval == 0 or force_plot) and self.plot_interval > 0 :
             # First figure shows m
             plt.figure(1)
             plt.semilogy(self.Abar, self.m)
@@ -205,7 +207,7 @@ class MS:
             
             #Fourth figure shows 2m/R
             plt.figure(4)
-            plt.semilogy(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi))
+            plt.semilogy(self.Abar, self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi))
             plt.title("2m/R")
             
             #Fifth figure shows Pprime
@@ -225,14 +227,6 @@ class MS:
             psi = self.psi(r, p, Pprime)
             plt.semilogy(psi)
             plt.title("psi")
-
-            plt.figure(4)
-            two_m_over_R = self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)
-            plt.semilogy(self.Abar, two_m_over_R)
-            plt.hlines(1, 0, np.max(self.Abar), 'k')
-            plt.ylim(10**-1, 10**2)
-            plt.title("2m/R")
-
 
         # Plot additional fields if force_plot is true
         if force_plot :
@@ -264,6 +258,7 @@ class MS:
             except:
                 pass
 
+            plt.ylim(10**-3, 10**6)
             plt.legend()
 
 

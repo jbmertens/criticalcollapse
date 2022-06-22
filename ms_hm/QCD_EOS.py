@@ -48,4 +48,4 @@ class QCD_EOS:
             ax.set_xlabel(r'Density, $\rho$ (MeV$^4$)')
             ax.set_ylabel(r'Ratio $P/\rho$');
 
-        print("Initialized pressure as a function of density. Access with class member P(rho).")
+        print("Initialized QCD pressure as a function of density.")
