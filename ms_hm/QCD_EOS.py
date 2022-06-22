@@ -29,12 +29,15 @@ class QCD_EOS:
         self.hoverg = np.array([1.00228, 1.00029, 1.00048, 1.00505, 1.02159, 1.02324, 1.05423,
                                1.07578, 1.06118, 1.04690, 1.01778, 1.00123, 1.00589, 1.00887,
                                1.00750, 1.00023])
-        self.Pressure = (4/3/self.hoverg - 1) * self.rho
-
-
+        self.Pressure = np.zeros(self.rho.size)
+        for i in range(0,self.rho.size):
+            if 3.52344876e+00 < self.rho[i] < 2.1791396e+23 + 1:
+                self.Pressure[i] = (4/3/self.hoverg[i] - 1) * self.rho[i]
+            else:
+                self.Pressure[i] = self.rho[i] / 3
         # Use polynomial interpolation and a spline
         # Probably want to generalize this so the function returns P = rho/3 outside of the tabulated range
-        self.P = interp.InterpolatedUnivariateSpline(self.rho, self.Pressure)
+        self.P = interp.InterpolatedUnivariateSpline(self.rho, self.Pressure) #bbox = [1 / 3, 1 / 3], ext = 3
 
         if init_plot :
             # For plotting purpose we generate a fine grid
