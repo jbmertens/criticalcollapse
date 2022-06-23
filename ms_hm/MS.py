@@ -19,7 +19,7 @@ class MS:
 
     def __init__(self, Abar, rho0, amp,
                  trace_ray=False, BH_threshold=1, dt_frac=0.05, sm_sigma=1,
-                 plot_interval=200):
+                 plot_interval=-1):
 
         # Initial coordinate grid & number of grid points
         self.Abar = Abar
@@ -28,21 +28,21 @@ class MS:
 
         # Equation of state & background information
         self.qcd = QCD_EOS()
-        self.w = self.qcd.P(rho0)/rho0
-        self.alpha = (2/3)/(1 + self.w)
+        self.w0 = self.qcd.P(rho0)/rho0
+        self.alpha = (2/3)/(1 + self.w0)
         self.t0 = self.alpha * np.sqrt(3 / (8*np.pi*rho0))
         self.t = self.t0
         self.RH = self.t0 / self.alpha
         self.Abar_stg = self.to_stg(self.Abar)
         self.A = Abar * self.RH
-        print("Initial w is", self.w, "and Horizon radius is", self.RH)
+        print("Initial w is", self.w0, "and Horizon radius is", self.RH)
 
         # Initial field values
         delta0 = amp * np.exp(-Abar**2 / 2 /(1.6)**2)
         delta0P = amp * delta0 * 2 * (-1 / 2 / (1.6)**2 ) * Abar
         self.m = 1 + delta0
         self.U = 1 - self.alpha * delta0 / 2
-        self.R = 1 - self.alpha / 2 * (delta0 + self.w * Abar * delta0P / (1 + 3 * self.w) )
+        self.R = 1 - self.alpha / 2 * (delta0 + self.w0 * Abar * delta0P / (1 + 3 * self.w0) )
 
         # Plot steps every so often
         self.plot_interval = plot_interval
@@ -77,6 +77,7 @@ class MS:
         self.r_old = 0
 
         self.BH_threshold = BH_threshold
+        self.m1_max = 0
         self.delta = -1
         
     
@@ -105,7 +106,7 @@ class MS:
         realRho = rho * rhob
         realP = self.qcd.P(realRho)
         P = realP/rhob # really Ptilde
-        return rho * self.w
+        return P #rho * self.w0
 
     def rho(self, R, m):
         temp = m + ms_rho_term(R, m, self.Abar)
@@ -170,12 +171,15 @@ class MS:
         A zero or negative mass at the origin indicates some outflow or
         other error, so a BH won't form in the remainder of the run.
         """
-        if(self.m[0] < self.BH_threshold):
-            print("Mass near origin is negative, so a black hole likely won't be forming!")
-            print("Nearby mass values were", self.m[:10])
-            print("Nearby velocity values were", self.U[:10])
-            print("This occurred at step", self.step)
-            self.plot_fields(force_plot=True)
+        if self.m[1] > self.m1_max :
+            self.m1_max = self.m[1]
+
+        if self.m[0] < self.BH_threshold :
+            print("Mass near origin is negative, so a black hole likely won't be forming! This occurred at step", self.step)
+            return True
+        elif self.m[1] < self.m1_max/2 :
+            # Check for mass drop at m[1], a significant one hopefully avoid any error due to noise
+            print("Mass near origin has dropped, so a black hole likely won't be forming! This occurred at step", self.step)
             return True
         else:
             return False
@@ -279,7 +283,7 @@ class MS:
             # Stop running if it becomes clear a BH won't form
             if(self.BH_wont_form() == True):
                 return -2
-            
+
             if(self.to_idx(self.Abar_p) > 50 and self.to_idx(self.Abar_p) < self.N * 0.8):
                 self.exec_pos = np.max([self.exec_pos, self.to_idx(self.Abar_p) - 10])
 
@@ -344,7 +348,6 @@ class MS:
             if(self.step % 10 == 0):
                 if(find_exec_pos(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)) > 0):
                     print("Horizon was found at step", self.step, "! code will be terminated.")
-                    self.plot_fields(force_plot=True)
                     return -1
 
         self.plot_fields(force_plot=True)
@@ -490,4 +493,4 @@ class MS:
         el =  (dfdA(a * self.A * R, self.Abar, 1) / self.RH) /(a * H * self.RH * g)
 
         return (np.log(1 + el / ep / np.exp(self.xi)
-                       * self.alpha * np.concatenate( ([1e10],(self.Abar[1:] - self.Abar[0:-1])) ) / np.sqrt(self.w))).min()
+                       * self.alpha * np.concatenate( ([1e10],(self.Abar[1:] - self.Abar[0:-1])) ) / np.sqrt(self.w0))).min()

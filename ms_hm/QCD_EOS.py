@@ -39,7 +39,6 @@ class QCD_EOS:
         # Probably want to generalize this so the function returns P = rho/3 outside of the tabulated range
         self.Pinterp = interp.InterpolatedUnivariateSpline(self.rho, self.Pressure)
 
-        print("Initialized QCD pressure as a function of density.")
 
     def P(self, rho) :
         if np.isscalar(rho) :
