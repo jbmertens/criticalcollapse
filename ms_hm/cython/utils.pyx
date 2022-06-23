@@ -178,6 +178,7 @@ cpdef ms_rho_term(np.ndarray R_in, double [:] m, double [:] A):
     # expression at origin
     i = 0
     res[i] = 0
+    
     # expression at outer boundary
     i = size - 1
     res[i] = A[i] * R[i] * (m[i] - m[i-1]) \

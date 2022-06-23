@@ -12,7 +12,11 @@ class QCD_EOS:
     https://arxiv.org/pdf/1801.06138.pdf
     """
 
-    def __init__(self, init_plot=True) :
+    def __init__(self, min_rho=1e2, max_rho=1e17) :
+
+        # return P = rho/3 when outside this range
+        self.min_rho = min_rho
+        self.max_rho = max_rho
 
         mpl.rc('xtick', direction='in', top=True)
         mpl.rc('ytick', direction='in', right=True)
@@ -29,26 +33,54 @@ class QCD_EOS:
         self.hoverg = np.array([1.00228, 1.00029, 1.00048, 1.00505, 1.02159, 1.02324, 1.05423,
                                1.07578, 1.06118, 1.04690, 1.01778, 1.00123, 1.00589, 1.00887,
                                1.00750, 1.00023])
-        self.Pressure = np.zeros(self.rho.size)
-        for i in range(0,self.rho.size):
-            if 3.52344876e+00 < self.rho[i] < 2.1791396e+23 + 1:
-                self.Pressure[i] = (4/3/self.hoverg[i] - 1) * self.rho[i]
-            else:
-                self.Pressure[i] = self.rho[i] / 3
+        self.Pressure = (4/3/self.hoverg - 1) * self.rho
+
         # Use polynomial interpolation and a spline
         # Probably want to generalize this so the function returns P = rho/3 outside of the tabulated range
-        self.P = interp.InterpolatedUnivariateSpline(self.rho, self.Pressure, bbox = [self.rho[0],self.rho[15]]) #ext = 3 
-
-        if init_plot :
-            # For plotting purpose we generate a fine grid
-            rho_grid = np.logspace(0.5, 23.5, 1000)
-
-            fig = plt.figure()
-            ax = fig.add_subplot(111)
-            ax.semilogx(self.rho, self.Pressure/self.rho, 'ko', label='Tabulated Values')
-            ax.semilogx(rho_grid, self.P(rho_grid)/rho_grid, 'b-', lw=2, label='Spline')
-            ax.legend(loc='best')
-            ax.set_xlabel(r'Density, $\rho$ (MeV$^4$)')
-            ax.set_ylabel(r'Ratio $P/\rho$');
+        self.Pinterp = interp.InterpolatedUnivariateSpline(self.rho, self.Pressure)
 
         print("Initialized QCD pressure as a function of density.")
+
+    def P(self, rho) :
+        if np.isscalar(rho) :
+            rho = np.array([rho])
+        P = np.copy(rho)/3.0
+
+        inbounds_rho = (rho < self.max_rho) & (rho > self.min_rho)
+        if np.any(inbounds_rho) :
+            P[inbounds_rho] = self.Pinterp(rho[inbounds_rho])
+        return P
+
+    def P_plot(self):
+        # For plotting purpose we generate a fine grid
+        rho_grid = np.logspace(0.01, 25, 1000)
+
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        ax.semilogx(self.rho, self.Pressure/self.rho, 'ko', label='Tabulated Values')
+        ax.semilogx(rho_grid, self.P(rho_grid)/rho_grid, 'b-', lw=2, label='Spline')
+        ax.legend(loc='best')
+        ax.set_xlabel(r'Density, $\rho$ (MeV$^4$)')
+        ax.set_ylabel(r'Ratio $P/\rho$');
+
+    def dPdrho(self, rho) :
+        if np.isscalar(rho) :
+            rho = np.array([rho])
+        dPdrho = np.ones_like(rho)/3.0
+
+        inbounds_rho = (rho < self.max_rho) & (rho > self.min_rho)
+        if np.any(inbounds_rho) :
+            dPdrho[inbounds_rho] = self.Pinterp.derivative()(rho[inbounds_rho])
+
+        return dPdrho
+
+    def dPdrho_plot(self):
+        # For plotting purpose we generate a fine grid
+        rho_grid = np.logspace(0.01, 25, 1000)
+
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        ax.semilogx(rho_grid, self.dPdrho(rho_grid), 'b-', lw=2, label='Spline')
+        ax.legend(loc='best')
+        ax.set_xlabel(r'Density, $\rho$ (MeV$^4$)')
+        ax.set_ylabel(r'Derivative, $dP/d\rho$');

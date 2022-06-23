@@ -24,9 +24,10 @@ class MS:
         # Initial coordinate grid & number of grid points
         self.Abar = Abar
         self.N = Abar.shape[0]
+        self.step = 0
 
         # Equation of state & background information
-        self.qcd = QCD_EOS(init_plot=False)
+        self.qcd = QCD_EOS()
         self.w = self.qcd.P(rho0)/rho0
         self.alpha = (2/3)/(1 + self.w)
         self.t0 = self.alpha * np.sqrt(3 / (8*np.pi*rho0))
@@ -77,11 +78,8 @@ class MS:
 
         self.BH_threshold = BH_threshold
         self.delta = -1
-
-        self.step = 0
         
-        
-
+    
     # convert to half grid
     def to_stg(self,arr):
         return (arr[0:-1] + arr[1:]) / 2
@@ -107,39 +105,32 @@ class MS:
         realRho = rho * rhob
         realP = self.qcd.P(realRho)
         P = realP/rhob # really Ptilde
-        return P
+        return rho * self.w
 
     def rho(self, R, m):
         temp = m + ms_rho_term(R, m, self.Abar)
-        temp = gaussian_filter1d(temp, sigma=self.sm_sigma, mode='nearest')
+        # temp = gaussian_filter1d(temp, sigma=self.sm_sigma, mode='nearest')
         return temp
 
     def psi(self, rho, p, Pprime):
-        offset = + np.log(rho[-1]**(-3 * self.alpha * self.w / 2))
+        offset = + np.log(rho[-1]**(-3 * self.alpha * self.qcd.dPdrho(rho[-1]) / 2))
         psi = inv_derv_phi(rho, p, offset)
         if (psi>100).any() :
             raise ValueError("Large psi detected at step "+str(self.step)+"!")
         return psi
 
-    def Pprime(self, p):
+    def Pprime(self, R, m):
         """
         Return spatial derivative of the pressure field
         """
-        
-        # "normal" derivative expression:
-        dPdAbar = self.RH * dfdA(p, self.Abar, 0, self.exec_pos)
-        
-        # "handed" derivative expression:
-        # dPdAbar = self.RH * np.concatenate( ([0], stg_dfdA(p, self.Abar_stg), [0]))
+        # staggered derivative expression:
+        R_stg = self.to_stg(R)
+        m_stg = self.to_stg(m)
+        rho_stg = m_stg + ms_rho_term_stg(R, m, self.Abar, R_stg, self.Abar_stg)
+        P_stg = self.P(rho_stg)
+        dPdAbar = np.concatenate( ([0], stg_dfdA(P_stg, self.Abar_stg), [0]) )
 
-        # Yet another expression?
-        # prefactor = self.w # ... ( (4g)/(3h) - 1 )
-        # R_stg = self.to_stg(self.R)
-        # m_stg = self.to_stg(self.m)
-        # rho_stg = m_stg + ms_rho_term_stg(self.R, self.m, self.Abar, R_stg, self.Abar_stg)
-        # dPdAbar = prefactor * np.concatenate( ([0], stg_dfdA(rho_stg, self.Abar_stg) , [0] ))
-
-        return dPdAbar 
+        return dPdAbar
 
     def k_coeffs(self, R, m, U, Abar_p, xi) :
         """
@@ -149,7 +140,7 @@ class MS:
         r = self.rho(R, m)
         p = self.P(r)
 
-        Pprime = self.Pprime(p)
+        Pprime = self.Pprime(R, m)
         ep = np.exp(self.psi(r, p, Pprime))
 
         kR = self.alpha * R * (U * ep - 1)
@@ -157,11 +148,17 @@ class MS:
 
         AR_prime = R + self.Abar * dfdA(R, self.Abar, 0, self.exec_pos)
 
+        H = np.exp(-self.xi) / self.RH
+        rhob = 3 / (8*np.pi) * H**2
+        realRho_A0 = r[0] * rhob
+        dpdrho_A0 = self.qcd.dPdrho(realRho_A0)[0]
+
         kU = U - self.alpha * ep * \
-            (   g**2 * np.concatenate( (
-                    [ (p[1] + p[1] - 2 * p[0])/self.Abar[1]**2 ] ,
-                    Pprime[1:] / (self.Abar[1:])
-            )) / (R * (AR_prime) * (r + p))  + (2 * U**2 + m + 3 * p) / 2)
+            (   g**2 * np.concatenate((
+                    [ 5/3 * dpdrho_A0 * (m[1] + m[1] - 2 * m[0]) / self.Abar[1]**2 ],
+                    # [ (p[1] + p[1] - 2 * p[0])/self.Abar[1]**2 ] , # <-- less stable?
+                    Pprime[1:] / self.Abar[1:]
+            )) / (R * (AR_prime) * (r + p)) + (2 * U**2 + m + 3 * p) / 2)
 
         kA_p = self.alpha * np.interp(Abar_p, self.Abar, ep * g / AR_prime)
 
@@ -212,7 +209,7 @@ class MS:
             
             #Fifth figure shows Pprime
             plt.figure(5)
-            Pprime = self.Pprime(self.P(r))
+            Pprime = self.Pprime(self.R, self.m)
             plt.plot(Pprime)
             plt.title("Pprime")
             
@@ -238,23 +235,25 @@ class MS:
             g = self.gamma(self.R, self.m, self.U, self.xi)
             r = self.rho(self.R, self.m)
             p = self.P(r)
-            Pprime = self.Pprime(p)
+            Pprime = self.Pprime(self.R, self.m)
 
             two_m_over_R = self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)
 
-            plt.semilogy(self.Abar, self.U, c='b', label='Velocity U')
-            plt.semilogy(self.Abar, -self.U, c='b', ls=':') # plot negative U values dashed
-            plt.semilogy(self.Abar, r, c='g', label='Density, rho')
-            plt.semilogy(self.Abar, -r, c='g', ls=':') # plot negative rho values dashed
-            plt.semilogy(self.Abar, self.m, c='r', label='Mass, m')
-            plt.semilogy(self.Abar, -self.m, c='r', ls=':') # plot negative mass values dashed
-            plt.semilogy(self.Abar, two_m_over_R, c='k', label='Horizon, 2m/R')
-            plt.semilogy(self.Abar, -two_m_over_R, c='k', ls=':') # plot negative mass values dashed
+            plt.loglog(self.Abar, self.U, c='b', label='Velocity U')
+            plt.loglog(self.Abar, -self.U, c='b', ls=':') # plot negative U values dashed
+            plt.loglog(self.Abar, r, c='g', label='Density, rho')
+            plt.loglog(self.Abar, -r, c='g', ls=':') # plot negative rho values dashed
+            plt.loglog(self.Abar, self.m, c='r', label='Mass, m')
+            plt.loglog(self.Abar, -self.m, c='r', ls=':') # plot negative mass values dashed
+            plt.loglog(self.Abar, two_m_over_R, c='k', label='Horizon, 2m/R')
+            plt.loglog(self.Abar, -two_m_over_R, c='k', ls=':') # plot negative mass values dashed
+            plt.loglog(self.Abar, p, c='m', label='Pressure, p')
+            plt.loglog(self.Abar, -p, c='m', ls=':') # plot negative pressure values dashed
 
             try :
                 psi = self.psi(r, p, Pprime)
-                plt.semilogy(self.Abar, psi, c='c', label="Metric factor psi")
-                plt.semilogy(self.Abar, -psi, c='c', ls=':')
+                plt.loglog(self.Abar, psi, c='c', label="Metric factor psi")
+                plt.loglog(self.Abar, -psi, c='c', ls=':')
             except:
                 pass
 
@@ -477,7 +476,7 @@ class MS:
         self.plot_fields(force_plot=True)
 
 
-    def cfl_deltau(self,R, m, U):
+    def cfl_deltau(self, R, m, U):
         a = np.exp(self.alpha * self.xi)
         H = np.exp(-self.xi) / self.RH
 
@@ -485,10 +484,10 @@ class MS:
         r = self.rho(R, m)
         p = self.P(r)
 
-        Pprime = self.Pprime(p)
+        Pprime = self.Pprime(R, m)
 
         ep = np.exp(self.psi(r, p, Pprime))
-        el =  (dfdA(a * self.A * self.R, self.Abar, 1) / self.RH) /(a * H * self.RH * g)
+        el =  (dfdA(a * self.A * R, self.Abar, 1) / self.RH) /(a * H * self.RH * g)
 
         return (np.log(1 + el / ep / np.exp(self.xi)
                        * self.alpha * np.concatenate( ([1e10],(self.Abar[1:] - self.Abar[0:-1])) ) / np.sqrt(self.w))).min()
