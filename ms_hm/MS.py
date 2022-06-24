@@ -18,7 +18,7 @@ class MS:
     """
 
     def __init__(self, Abar, rho0, amp,
-                 trace_ray=False, BH_threshold=1, dt_frac=0.05, sm_sigma=1,
+                 trace_ray=False, BH_threshold=1, dt_frac=0.05, sm_sigma=0.0,
                  plot_interval=-1):
 
         # Initial coordinate grid & number of grid points
@@ -77,7 +77,7 @@ class MS:
         self.r_old = 0
 
         self.BH_threshold = BH_threshold
-        self.m1_max = 0
+        self.field_max = 0
         self.delta = -1
         
     
@@ -106,11 +106,12 @@ class MS:
         realRho = rho * rhob
         realP = self.qcd.P(realRho)
         P = realP/rhob # really Ptilde
-        return P #rho * self.w0
+        return P
 
     def rho(self, R, m):
         temp = m + ms_rho_term(R, m, self.Abar)
-        # temp = gaussian_filter1d(temp, sigma=self.sm_sigma, mode='nearest')
+        if self.sm_sigma > 0 :
+            temp = gaussian_filter1d(temp, sigma=self.sm_sigma, mode='nearest')
         return temp
 
     def psi(self, rho, p, Pprime):
@@ -171,15 +172,16 @@ class MS:
         A zero or negative mass at the origin indicates some outflow or
         other error, so a BH won't form in the remainder of the run.
         """
-        if self.m[1] > self.m1_max :
-            self.m1_max = self.m[1]
+        r = self.rho(self.R, self.m)[4]
+        if r > self.field_max :
+            self.field_max = r
 
         if self.m[0] < self.BH_threshold :
             print("Mass near origin is negative, so a black hole likely won't be forming! This occurred at step", self.step)
             return True
-        elif self.m[1] < self.m1_max/2 :
-            # Check for mass drop at m[1], a significant one hopefully avoid any error due to noise
-            print("Mass near origin has dropped, so a black hole likely won't be forming! This occurred at step", self.step)
+        elif r < self.field_max*1/5 :
+            # Check for significant mass drop in density or mass near the origin?
+            print("Density near origin has dropped significantly, so a black hole likely won't be forming! This occurred at step", self.step)
             return True
         else:
             return False
@@ -261,7 +263,7 @@ class MS:
             except:
                 pass
 
-            plt.ylim(10**-3, 10**6)
+            plt.ylim(10**-3, 10**9)
             plt.legend()
 
 
@@ -281,7 +283,7 @@ class MS:
             self.plot_fields()
             
             # Stop running if it becomes clear a BH won't form
-            if(self.BH_wont_form() == True):
+            if (self.BH_wont_form() == True) :
                 return -2
 
             if(self.to_idx(self.Abar_p) > 50 and self.to_idx(self.Abar_p) < self.N * 0.8):

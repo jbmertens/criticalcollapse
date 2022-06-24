@@ -41,10 +41,13 @@ class QCD_EOS:
 
 
     def P(self, rho) :
+        # Convert a number rho into an array, just so we know we're
+        # working with an array
         if np.isscalar(rho) :
             rho = np.array([rho])
+        # Pressure values by default are rho/3
         P = np.copy(rho)/3.0
-
+        # For rho values in a certain range, use the special QCD EOS
         inbounds_rho = (rho < self.max_rho) & (rho > self.min_rho)
         if np.any(inbounds_rho) :
             P[inbounds_rho] = self.Pinterp(rho[inbounds_rho])

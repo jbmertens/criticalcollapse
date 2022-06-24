@@ -57,10 +57,21 @@ class HM:
     def gamma(self, R, m, U, xi):
         return np.sqrt(np.exp(2 * (1 - self.alpha) * xi)
                        + (self.Abar * R)**2 * (U**2 - m))
+    
     def P(self, rho) :
-        return self.w * rho
+        """
+        Compute (tilded) pressure as a function of (tilded) density.
+        """
+        H = np.exp(-self.xi) / self.RH
+        rhob = 3 / (8*np.pi) * H**2
+        realRho = rho * rhob
+        realP = self.qcd.P(realRho)
+        P = realP/rhob # really Ptilde
+        return P
+
     def rho(self, R, m, U, xi, g, xiprime, Rprime, mprime):
-        temp = (g + self.Abar * R * U) / (g - (self.w + self.Q ) * self.Abar * R * U ) \
+        # TODO: correct expression here for density without specific EOS
+        temp = (g + self.Abar * R * U) / (g - ( self.Q ) * self.Abar * R * U ) \
             * (m + self.Abar * R * hm_rho_term(R, m, self.Abar, xi, self.alpha) / 3)
         #temp = scipy.signal.savgol_filter(temp, 91, 3, mode='interp')
         temp=gaussian_filter1d(temp, sigma = self.sm_sigma, mode='nearest')
@@ -120,7 +131,7 @@ class HM:
         r = self.rho(R, m, U, xi, g, xiprime, Rprime, mprime)
         p = self.P(r)
         Q = p / r
-        Qprime = dfdA (Q, self.Abar, 1e100)
+        Qprime = dfdA(Q, self.Abar, 1e100)
         exi = np.exp(xi)
         ephi = self.ephi(R, U, g, xi, xiprime, Rprime)
         elambda = self.elambda(ephi, exi, xiprime)
