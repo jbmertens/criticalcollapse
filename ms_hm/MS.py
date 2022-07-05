@@ -375,9 +375,8 @@ class MS:
                 return -2
 
             if (deltau < 1e-9):
-                print("Warning, the time step is too small! Stopping run at step",
-                    self.step, "with timestep", deltau)
-                return 1
+                 raise ValueError("Warning, the time step is too small! Stopping run at step "
+                    +str(self.step)+" with timestep "+str(deltau))
 
             if(self.to_idx(self.Abar_p) > 50 and self.to_idx(self.Abar_p) < self.N * 0.8):
                 self.exec_pos = np.max([self.exec_pos, self.to_idx(self.Abar_p) - 10])

@@ -39,18 +39,18 @@ class QCD_EOS:
         # Probably want to generalize this so the function returns P = rho/3 outside of the tabulated range
         self.Pinterp = interp.InterpolatedUnivariateSpline(self.rho, self.Pressure)
 
+    def H(self, rho) :
+        mu = 1000
+        return (np.tanh(rho/mu) + 1)/2
 
     def P(self, rho) :
         # Convert a number rho into an array, just so we know we're
         # working with an array
         if np.isscalar(rho) :
             rho = np.array([rho])
-        # Pressure values by default are rho/3
-        P = np.copy(rho)/3.0
-        # For rho values in a certain range, use the special QCD EOS
-        inbounds_rho = (rho < self.max_rho) & (rho > self.min_rho)
-        if np.any(inbounds_rho) :
-            P[inbounds_rho] = self.Pinterp(rho[inbounds_rho])
+        P_in = self.Pinterp(rho)
+        P_out = 1/3*rho
+        P = P_out + self.H(rho - self.min_rho)*self.H(self.max_rho - rho)*(P_in - P_out)
         return P
 
     def P_plot(self):
@@ -68,12 +68,9 @@ class QCD_EOS:
     def dPdrho(self, rho) :
         if np.isscalar(rho) :
             rho = np.array([rho])
-        dPdrho = np.ones_like(rho)/3.0
-
-        inbounds_rho = (rho < self.max_rho) & (rho > self.min_rho)
-        if np.any(inbounds_rho) :
-            dPdrho[inbounds_rho] = self.Pinterp.derivative()(rho[inbounds_rho])
-
+        dPdrho_in = self.Pinterp.derivative()(rho)
+        dPdrho_out = 1/3*np.ones_like(rho)
+        dPdrho = dPdrho_out + self.H(rho - self.min_rho)*self.H(self.max_rho - rho)*(dPdrho_in - dPdrho_out)
         return dPdrho
 
     def dPdrho_plot(self):
