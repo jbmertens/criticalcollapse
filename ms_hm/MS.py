@@ -3,6 +3,8 @@ import numpy as np
 import scipy.integrate as integ
 import scipy.interpolate as interp
 import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+from IPython.display import HTML
 from scipy.ndimage import gaussian_filter1d
 
 from ms_hm.utils import *
@@ -19,7 +21,7 @@ class MS:
 
     def __init__(self, Abar, rho0, amp,
                  trace_ray=False, BH_threshold=1, dt_frac=0.05, sm_sigma=0.0,
-                 plot_interval=-1):
+                 plot_interval=-1, fixw=False):
 
         # Initial coordinate grid & number of grid points
         self.Abar = Abar
@@ -28,6 +30,8 @@ class MS:
 
         # Equation of state & background information
         self.qcd = QCD_EOS()
+        if fixw :
+            qcd.fix_w(rho0)
         self.w0 = self.qcd.P(rho0)/rho0
         self.alpha = (2/3)/(1 + self.w0)
         self.t0 = self.alpha * np.sqrt(3 / (8*np.pi*rho0))
@@ -35,7 +39,10 @@ class MS:
         self.RH = self.t0 / self.alpha
         self.Abar_stg = self.to_stg(self.Abar)
         self.A = Abar * self.RH
-        print("Initial w is", self.w0, "and Horizon radius is", self.RH)
+        if fixw :
+            print("Initial w is *fixed* at", self.w0, "and Horizon radius is", self.RH)
+        else :
+            print("Initial w is", self.w0, "and Horizon radius is", self.RH)
 
         # Initial field values
         delta0 = amp * np.exp(-Abar**2 / 2 /(1.6)**2)
@@ -46,6 +53,8 @@ class MS:
 
         # Plot steps every so often
         self.plot_interval = plot_interval
+        self.movie_plot_interval = 0
+        self.movie_frames = []
 
         # Stability & integration parameters and such
         self.exec_pos = -1
@@ -232,9 +241,8 @@ class MS:
             plt.title("psi")
 
         # Plot additional fields if force_plot is true
-        if force_plot :
-            plt.figure(8)
-
+        if force_plot or self.movie_plot_interval > 0 :
+            
             a = np.exp(self.alpha * self.xi)
             H = np.exp(-self.xi) / self.RH
 
@@ -245,29 +253,37 @@ class MS:
 
             two_m_over_R = self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)
 
-            plt.loglog(self.Abar, self.U, c='b', label='Velocity U')
-            plt.loglog(self.Abar, -self.U, c='b', ls=':') # plot negative U values dashed
-            plt.loglog(self.Abar, r, c='g', label='Density, rho')
-            plt.loglog(self.Abar, -r, c='g', ls=':') # plot negative rho values dashed
-            plt.loglog(self.Abar, self.m, c='r', label='Mass, m')
-            plt.loglog(self.Abar, -self.m, c='r', ls=':') # plot negative mass values dashed
-            plt.loglog(self.Abar, two_m_over_R, c='k', label='Horizon, 2m/R')
-            plt.loglog(self.Abar, -two_m_over_R, c='k', ls=':') # plot negative mass values dashed
-            plt.loglog(self.Abar, p, c='m', label='Pressure, p')
-            plt.loglog(self.Abar, -p, c='m', ls=':') # plot negative pressure values dashed
+            fields_plot = plt.figure(10+len(self.movie_frames))
+            ax = fields_plot.add_subplot(111)
+            ax.loglog(self.Abar, self.U, c='b', label='Velocity U')
+            ax.loglog(self.Abar, -self.U, c='b', ls=':') # plot negative U values dashed
+            ax.loglog(self.Abar, r, c='g', label='Density, rho')
+            ax.loglog(self.Abar, -r, c='g', ls=':') # plot negative rho values dashed
+            ax.loglog(self.Abar, self.m, c='r', label='Mass, m')
+            ax.loglog(self.Abar, -self.m, c='r', ls=':') # plot negative mass values dashed
+            ax.loglog(self.Abar, two_m_over_R, c='k', label='Horizon, 2m/R')
+            ax.loglog(self.Abar, -two_m_over_R, c='k', ls=':') # plot negative mass values dashed
+            ax.loglog(self.Abar, p, c='m', label='Pressure, p')
+            ax.loglog(self.Abar, -p, c='m', ls=':') # plot negative pressure values dashed
 
             try :
                 psi = self.psi(r, p, Pprime)
-                plt.loglog(self.Abar, psi, c='c', label="Metric factor psi")
-                plt.loglog(self.Abar, -psi, c='c', ls=':')
+                ax.loglog(self.Abar, psi, c='c', label="Metric factor psi")
+                ax.loglog(self.Abar, -psi, c='c', ls=':')
             except:
                 pass
 
-            plt.ylim(10**-3, 10**9)
-            plt.legend()
+            ax.hlines(1.0, self.Abar[1], self.Abar[-1])
+            ax.set_ylim(10**-4, 10**9)
+            ax.legend()
+
+            if (self.movie_plot_interval > 0) and (self.step % self.movie_plot_interval == 0) :
+                print("Generating plot")
+                self.movie_frames.append([ax])
+                plt.close()
 
 
-    def run_steps(self, n_steps, exc_intv=0) :
+    def run_steps(self, n_steps) :
         """
         
         """
@@ -375,8 +391,9 @@ class MS:
                 return -2
 
             if (deltau < 1e-9):
-                 raise ValueError("Warning, the time step is too small! Stopping run at step "
+                raise ValueError("Warning, the time step is too small! Stopping run at step "
                     +str(self.step)+" with timestep "+str(deltau))
+                return 1
 
             if(self.to_idx(self.Abar_p) > 50 and self.to_idx(self.Abar_p) < self.N * 0.8):
                 self.exec_pos = np.max([self.exec_pos, self.to_idx(self.Abar_p) - 10])
@@ -468,7 +485,7 @@ class MS:
 
             else:
                 # reducing the deltau since diff is too large
-                deltau /= 2
+                deltau /= 1.5
 
             self.deltau_adap = deltau
 
@@ -495,3 +512,12 @@ class MS:
 
         return (np.log(1 + el / ep / np.exp(self.xi)
                        * self.alpha * np.concatenate( ([1e10],(self.Abar[1:] - self.Abar[0:-1])) ) / np.sqrt(self.w0))).min()
+
+    def movie(self):
+
+        fig = plt.figure()
+        # plt.close()
+
+        anim = animation.ArtistAnimation(fig, self.movie_frames,
+            interval=100, repeat=False)
+        HTML(anim.to_jshtml())
