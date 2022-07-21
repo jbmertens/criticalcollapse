@@ -12,11 +12,21 @@ class QCD_EOS:
     https://arxiv.org/pdf/1801.06138.pdf
     """
 
-    def __init__(self, min_rho=1e2, max_rho=1e17) :
+    def __init__(self,
+            min_rho=1e2, max_rho=1e17, # bounds to use the "correct" QCD EOS in (otherwise, w=1/3)
+            mu=100 # Width of transition from QCD -> w=1/3
+            ) :
+        """
+        Constructor to initialize class.
+        """
 
-        # return P = rho/3 when outside this range
+        # Return P = rho/3 when outside this range
         self.min_rho = min_rho
         self.max_rho = max_rho
+
+        # call fix_w() to use a fixed w instead of
+        self.use_fixedw = False
+        self.fixedw = 1/3
 
         mpl.rc('xtick', direction='in', top=True)
         mpl.rc('ytick', direction='in', right=True)
@@ -39,19 +49,28 @@ class QCD_EOS:
         # Probably want to generalize this so the function returns P = rho/3 outside of the tabulated range
         self.Pinterp = interp.InterpolatedUnivariateSpline(self.rho, self.Pressure)
 
+    def fix_w(self, rho0) :
+        self.use_fixedw = True
+        self.fixedw = self.dPdrho(rho0)
+
     def H(self, rho) :
+        """
+        Transition function t
+        """
         mu = 1000
         return (np.tanh(rho/mu) + 1)/2
 
     def P(self, rho) :
-        # Convert a number rho into an array, just so we know we're
-        # working with an array
-        if np.isscalar(rho) :
-            rho = np.array([rho])
-        P_in = self.Pinterp(rho)
-        P_out = 1/3*rho
-        P = P_out + self.H(rho - self.min_rho)*self.H(self.max_rho - rho)*(P_in - P_out)
-        return P
+        """
+        Return the pressure for a given density rho
+        """
+        if self.use_fixedw :
+            return self.fixedw * rho
+        else :
+            P_in = self.Pinterp(rho)
+            P_out = 1/3*rho
+            P = P_out + self.H(rho - self.min_rho)*self.H(self.max_rho - rho)*(P_in - P_out)
+            return P
 
     def P_plot(self):
         # For plotting purpose we generate a fine grid
@@ -66,12 +85,17 @@ class QCD_EOS:
         ax.set_ylabel(r'Ratio $P/\rho$');
 
     def dPdrho(self, rho) :
-        if np.isscalar(rho) :
-            rho = np.array([rho])
-        dPdrho_in = self.Pinterp.derivative()(rho)
-        dPdrho_out = 1/3*np.ones_like(rho)
-        dPdrho = dPdrho_out + self.H(rho - self.min_rho)*self.H(self.max_rho - rho)*(dPdrho_in - dPdrho_out)
-        return dPdrho
+        """
+        Return the pressure derivative wrt. rho, i.e. the equation of
+        state parameter w in the constant w case.
+        """
+        if self.use_fixedw :
+            return (rho/rho)*self.fixedw
+        else :
+            dPdrho_in = self.Pinterp.derivative()(rho)
+            dPdrho_out = 1/3*np.ones_like(rho)
+            dPdrho = dPdrho_out + self.H(rho - self.min_rho)*self.H(self.max_rho - rho)*(dPdrho_in - dPdrho_out)
+            return dPdrho
 
     def dPdrho_plot(self):
         # For plotting purpose we generate a fine grid

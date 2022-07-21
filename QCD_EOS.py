@@ -25,7 +25,7 @@ class QCD_EOS:
         self.max_rho = max_rho
 
         # call fix_w() to use a fixed w instead of
-        self.use_fixedw = False
+        self.use_fixedw = True
         self.fixedw = 1/3
 
         mpl.rc('xtick', direction='in', top=True)
@@ -50,7 +50,7 @@ class QCD_EOS:
         self.Pinterp = interp.InterpolatedUnivariateSpline(self.rho, self.Pressure)
 
     def fix_w(self, rho0) :
-        self.use_fixedw = True
+        self.use_fixedw = False
         self.fixedw = self.dPdrho(rho0)
 
     def H(self, rho) :

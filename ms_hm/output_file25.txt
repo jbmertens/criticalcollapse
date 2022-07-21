@@ -1,0 +1,2 @@
+[TerminalIPythonApp] WARNING | File 'Critical_scaling.py' doesn't exist
+[22;0t]0;IPython: home/drewrosenblum

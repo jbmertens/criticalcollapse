@@ -172,5 +172,5 @@ def find_mass(Abar, rho0, amp, is_searching_for_crit=False, default_steps=150000
 n = 400
 Abar = mix_grid(np.log10(1.5), np.log10(40), n)
 rho0 = float(sys.argv[1]) # initial density value in MeV^4
-find_crit(Abar, rho0, 0.15, 0.3, fixw=False)
+find_crit(Abar, rho0, 0.15, 0.3, fixw=True)
 

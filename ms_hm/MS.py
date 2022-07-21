@@ -31,7 +31,7 @@ class MS:
         # Equation of state & background information
         self.qcd = QCD_EOS()
         if fixw :
-            qcd.fix_w(rho0)
+            self.qcd.fix_w(rho0)
         self.w0 = self.qcd.P(rho0)/rho0
         self.alpha = (2/3)/(1 + self.w0)
         self.t0 = self.alpha * np.sqrt(3 / (8*np.pi*rho0))
@@ -162,7 +162,7 @@ class MS:
         H = np.exp(-self.xi) / self.RH
         rhob = 3 / (8*np.pi) * H**2
         realRho_A0 = r[0] * rhob
-        dpdrho_A0 = self.qcd.dPdrho(realRho_A0)[0]
+        dpdrho_A0 = self.qcd.dPdrho(realRho_A0)
 
         kU = U - self.alpha * ep * \
             (   g**2 * np.concatenate((
@@ -390,7 +390,7 @@ class MS:
             if(self.BH_wont_form() == True):
                 return -2
 
-            if (deltau < 1e-9):
+            if (deltau < 1e-11):
                 raise ValueError("Warning, the time step is too small! Stopping run at step "
                     +str(self.step)+" with timestep "+str(deltau))
                 return 1
