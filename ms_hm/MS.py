@@ -20,7 +20,7 @@ class MS:
     """
 
     def __init__(self, Abar, rho0, amp,
-                 trace_ray=False, BH_threshold=1, dt_frac=0.05, sm_sigma=0.0,
+                 trace_ray=False, BH_threshold=1, dt_frac=0.025, sm_sigma=0.0,
                  plot_interval=-1, fixw=False):
 
         # Initial coordinate grid & number of grid points
@@ -338,7 +338,7 @@ class MS:
                 R_p_new = np.interp(Abar_p_new, self.Abar, self.R)
 
                 diff = idx_p_new - self.to_idx(self.Abar_p)
-                if (diff > 1): ##move across more than two grid pints!
+                if (diff > 1): # move across more than two grid pints!
                     print('Warning!' + str(self.Abar_p) + ' ' + str(Abar_p_new))
                     print("Code stopped running on step", self.step)
                     return 2
@@ -350,13 +350,13 @@ class MS:
                     self.R_hm[idx_p_new] = R_p_new * interp_w + self.R_p * (1 - interp_w)
                     self.xi_hm[idx_p_new] = self.xi + deltau * interp_w
 
-                if(self.xi >= self.xi_hm[0]): #only start advancing photon when the system time is large enough
+                if(self.xi >= self.xi_hm[0]): # only start advancing photon when the system time is large enough
                     self.Abar_p = Abar_p_new
                     self.U_p = U_p_new
                     self.m_p = m_p_new
                     self.R_p = R_p_new
 
-                if(idx_p_new == self.N-2): #going out of the boundary
+                if(idx_p_new == self.N-2): # going out of the boundary
                     print("Photon has gone out of the outter boundary!")
                     return 0
 
@@ -390,8 +390,8 @@ class MS:
             if(self.BH_wont_form() == True):
                 return -2
 
-            if (deltau < 1e-11):
-                raise ValueError("Warning, the time step is too small! Stopping run at step "
+            if (deltau < 1e-14):
+                print("Warning, the time step is too small! Stopping run at step "
                     +str(self.step)+" with timestep "+str(deltau))
                 return 1
 
@@ -479,8 +479,8 @@ class MS:
 
             if( diff <= 1 ):
                 # Adjust step size.
-                self.q = 0.8*np.min((max_err_R/E_R, max_err_m/E_m, max_err_U/E_U) )**(1/3)   # conservative optimal step factor
-                self.q = min(self.q, 10)               # limit stepsize growth
+                self.q = 0.7*np.min((max_err_R/E_R, max_err_m/E_m, max_err_U/E_U) )**(1/3)   # conservative optimal step factor
+                self.q = min(self.q, 5)               # limit stepsize growth
                 deltau *= self.q
 
             else:
@@ -489,7 +489,7 @@ class MS:
 
             self.deltau_adap = deltau
 
-            if(self.step % 10 == 0):
+            if(self.step % 4 == 0):
                 if(find_exec_pos(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)) > 0):
                     print("Horizon is found, code will be terminated! Finished at step", self.step)
                     return -1

@@ -99,9 +99,9 @@ def BH_form(Abar, rho0, amp, default_steps=1500000, sm_sigma=0.0, fixw=False):
     
     run_result = ms.adap_run_steps(default_steps)
     if run_result == -1 :
-        return (True, ms.delta, ms)
+        return (True, run_result, ms.delta, ms)
     
-    return (False, ms.delta, ms)
+    return (False, run_result, ms.delta, ms)
 
 
 def find_crit(Abar, rho0, lower_amp, upper_amp,
@@ -113,23 +113,36 @@ def find_crit(Abar, rho0, lower_amp, upper_amp,
     """
     upper_ms = -1
     lower_ms = -1
+    bisection_factor = 1/2
     for i in range(20):
-        middle_amp = (lower_amp + upper_amp) / 2
-        print('Iteration No', str(i), '-- Checking to see if a BH forms at amplitude', str(middle_amp))
-
         try :
-            forms, delta, ms = BH_form(Abar, rho0, middle_amp, sm_sigma=sm_sigma, fixw=fixw)
+            amp_diff = upper_amp - lower_amp
+            middle_amp = upper_amp - amp_diff*bisection_factor
+            print('Iteration No', str(i), '-- Checking to see if a BH forms at amplitude', str(middle_amp),
+                ' (bracket is ', lower_amp, '/', upper_amp, ')')
+
+            forms, result, delta, ms = BH_form(Abar, rho0, middle_amp, sm_sigma=sm_sigma, fixw=fixw)
+
+            if result > 0 : # Some sort of error during run
+                print("Encountered error during run. Trying again with a different amplitude.")
+                # change bisection factor (don't divide just in half; walk in by 1/4, 1/8, ... from the ends.)
+                if bisection_factor >= 1/2 :
+                    bisection_factor = (1-bisection_factor)/2
+                else :
+                    bisection_factor = 1-bisection_factor
+            else :
+                bisection_factor = 1/2
+                if(forms == True):
+                    upper_amp = middle_amp
+                    upper_ms = ms
+                else:
+                    lower_amp = middle_amp
+                    lower_ms = ms
+
         except Exception as e :
-            print("Run failed with amplitude", middle_amp, "! Stopping search. Reason below.")
+            print("Run failed! Stopping search. Reason below.")
             print(e)
             break
-        
-        if(forms == True):
-            upper_amp = middle_amp
-            upper_ms = ms
-        else:
-            lower_amp = middle_amp
-            lower_ms = ms
     
     print("Critical amplitude appears to be between", lower_amp, "and", upper_amp)
     try :
@@ -172,5 +185,6 @@ def find_mass(Abar, rho0, amp, is_searching_for_crit=False, default_steps=150000
 n = 400
 Abar = mix_grid(np.log10(1.5), np.log10(40), n)
 rho0 = float(sys.argv[1]) # initial density value in MeV^4
-find_crit(Abar, rho0, 0.15, 0.3, fixw=True)
-
+fixw = bool(int(sys.argv[2]))
+print("Running simulation with rho0 =", rho0, "and fixw =", fixw)
+find_crit(Abar, rho0, 0.15, 0.3, fixw=fixw)

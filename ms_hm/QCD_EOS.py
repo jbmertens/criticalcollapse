@@ -50,8 +50,8 @@ class QCD_EOS:
         self.Pinterp = interp.InterpolatedUnivariateSpline(self.rho, self.Pressure)
 
     def fix_w(self, rho0) :
-        self.use_fixedw = True
         self.fixedw = self.dPdrho(rho0)
+        self.use_fixedw = True
 
     def H(self, rho) :
         """
