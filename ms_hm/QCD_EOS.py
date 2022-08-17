@@ -39,7 +39,9 @@ class QCD_EOS:
                       100000, 281838.293])
         self.geff = np.array([10.71, 10.74, 10.76, 11.09, 13.68, 17.61, 24.07, 29.84,
                          47.83, 53.04, 73.48, 83.10, 85.56, 91.97, 102.17, 104.98])
+        self.gOfT = interp.InterpolatedUnivariateSpline(self.T, self.geff,ext=3)
         self.rho = np.pi**2 / 30 * self.geff * self.T**4
+        self.ToFrho = interp.InterpolatedUnivariateSpline(self.rho,self.T, ext=3)
         self.hoverg = np.array([1.00228, 1.00029, 1.00048, 1.00505, 1.02159, 1.02324, 1.05423,
                                1.07578, 1.06118, 1.04690, 1.01778, 1.00123, 1.00589, 1.00887,
                                1.00750, 1.00023])
@@ -57,7 +59,7 @@ class QCD_EOS:
         """
         Transition function t
         """
-        mu = 1000
+        mu = 10000
         return (np.tanh(rho/mu) + 1)/2
 
     def P(self, rho) :
@@ -107,3 +109,21 @@ class QCD_EOS:
         ax.legend(loc='best')
         ax.set_xlabel(r'Density, $\rho$ (MeV$^4$)')
         ax.set_ylabel(r'Derivative, $dP/d\rho$');
+        
+    def MH(self, T):
+        GoverHc = 6.7e-45
+        solarMassperMeV = 1 / 1.12e60
+        return solarMassperMeV* (((8*np.pi*GoverHc) / 3)**(-3/2) * ((np.pi**2 / 30)*self.gOfT(T))**(-1/2) * T**-2)
+    def MH_plot(self):
+        # For plotting purpose we generate a fine grid
+        T_grid = np.logspace(1, 6, 1000)
+
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        ax.loglog(self.T, self.MH(self.T), 'ko', label='Tabulated Values')
+        ax.loglog(T_grid, self.MH(T_grid), 'b-', lw=2, label='Spline')
+        ax.legend(loc='best')
+        ax.set_xlabel(r'Temperature, $T$ (MeV)')
+        ax.set_ylabel(r'Horizon Mass');
+        
+        
