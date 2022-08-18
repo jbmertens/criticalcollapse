@@ -11,6 +11,7 @@ from ms_hm.utils import *
 class HM:
 
     def __init__(self, MS, mOverR=0.999, sm_sigma=5):
+
         self.R = MS.R_hm
         self.m = MS.m_hm
         self.U = MS.U_hm
@@ -19,23 +20,24 @@ class HM:
 
         self.sm_sigma = sm_sigma
 
-        self.w = MS.w
         self.A = MS.A[:self.N]
-        self.alpha = MS.alpha
-
 
         self.t0 = MS.t0
         self.t = self.t0
         self.u = 0
+        self.RH = MS.RH
 
-        self.RH = self.t0 / self.alpha
+        self.qcd = MS.qcd
+        self.w0 = MS.w0
+        self.alpha = MS.alpha
+
         self.Abar = MS.Abar[:self.N]
         self.Abar_stg = self.to_stg(self.Abar)
         #self.Abar_stg = WENO_to_stg(self.Abar)
-        self.Vbar = np.concatenate(
-            ([MS.Abar[1] ], (MS.Abar[2:] - MS.Abar[0:self.N-1]) / 2) )
+        # self.Vbar = np.concatenate(
+        #     ([MS.Abar[1] ], (MS.Abar[2:] - MS.Abar[0:self.N-1]) / 2) )
 
-        self.kappa = 2
+        # self.kappa = 2
         self.Q = np.zeros(self.N)
         self.Q_du = np.zeros(self.N)
         self.Q_old = np.zeros(self.N)
@@ -47,13 +49,16 @@ class HM:
         self.mOverR = mOverR
 
         return
+
     # convert to half grid
     def to_stg(self,arr):
         return (arr[0:-1] + arr[1:]) / 2
+
     def to_cubic_stg(self,arr):
         a1 = arr[0:-1] ** 3
         a2 = arr[1:] ** 3
         return (a1 + a2) / (np.abs(a1 + a2)) * ( np.abs(a1 + a2)/ 2) **(1/3)
+
     def gamma(self, R, m, U, xi):
         return np.sqrt(np.exp(2 * (1 - self.alpha) * xi)
                        + (self.Abar * R)**2 * (U**2 - m))
@@ -70,8 +75,7 @@ class HM:
         return P
 
     def rho(self, R, m, U, xi, g, xiprime, Rprime, mprime):
-        # TODO: correct expression here for density without specific EOS
-        temp = (g + self.Abar * R * U) / (g - ( self.Q ) * self.Abar * R * U ) \
+        temp = (g + self.Abar * R * U) / (g - self.Q * self.Abar * R * U ) \
             * (m + self.Abar * R * hm_rho_term(R, m, self.Abar, xi, self.alpha) / 3)
         #temp = scipy.signal.savgol_filter(temp, 91, 3, mode='interp')
         temp=gaussian_filter1d(temp, sigma = self.sm_sigma, mode='nearest')

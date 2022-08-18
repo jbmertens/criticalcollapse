@@ -45,7 +45,7 @@ class MS:
             print("Initial w is", self.w0, "and Horizon radius is", self.RH)
 
         # Initial field values
-        delta0 = amp * np.exp(-Abar**2 / 2 /(1.6)**2)
+        delta0 = amp * np.exp(-Abar**2 / 2 / (1.6)**2)
         delta0P = amp * delta0 * 2 * (-1 / 2 / (1.6)**2 ) * Abar
         self.m = 1 + delta0
         self.U = 1 - self.alpha * delta0 / 2
@@ -513,11 +513,11 @@ class MS:
         return (np.log(1 + el / ep / np.exp(self.xi)
                        * self.alpha * np.concatenate( ([1e10],(self.Abar[1:] - self.Abar[0:-1])) ) / np.sqrt(self.w0))).min()
 
-    def movie(self):
+    # def movie(self):
 
-        fig = plt.figure()
-        # plt.close()
+    #     fig = plt.figure()
+    #     # plt.close()
 
-        anim = animation.ArtistAnimation(fig, self.movie_frames,
-            interval=100, repeat=False)
-        HTML(anim.to_jshtml())
+    #     anim = animation.ArtistAnimation(fig, self.movie_frames,
+    #         interval=100, repeat=False)
+    #     HTML(anim.to_jshtml())

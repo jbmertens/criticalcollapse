@@ -39,9 +39,7 @@ class QCD_EOS:
                       100000, 281838.293])
         self.geff = np.array([10.71, 10.74, 10.76, 11.09, 13.68, 17.61, 24.07, 29.84,
                          47.83, 53.04, 73.48, 83.10, 85.56, 91.97, 102.17, 104.98])
-        self.gOfT = interp.InterpolatedUnivariateSpline(self.T, self.geff,ext=3)
         self.rho = np.pi**2 / 30 * self.geff * self.T**4
-        self.ToFrho = interp.InterpolatedUnivariateSpline(self.rho,self.T, ext=3)
         self.hoverg = np.array([1.00228, 1.00029, 1.00048, 1.00505, 1.02159, 1.02324, 1.05423,
                                1.07578, 1.06118, 1.04690, 1.01778, 1.00123, 1.00589, 1.00887,
                                1.00750, 1.00023])
@@ -49,10 +47,17 @@ class QCD_EOS:
 
         # Use polynomial interpolation and a spline
         # Probably want to generalize this so the function returns P = rho/3 outside of the tabulated range
+        self.gOfT = interp.InterpolatedUnivariateSpline(self.T, self.geff, ext=3)
+        self.logT_of_logrho = interp.InterpolatedUnivariateSpline(np.log(self.rho), np.log(self.T), ext=0)
         self.Pinterp = interp.InterpolatedUnivariateSpline(self.rho, self.Pressure)
 
-    def fix_w(self, rho0) :
-        self.fixedw = self.dPdrho(rho0)
+    def fix_w(self, rho0, use_turnaround=False) :
+        if use_turnaround :
+            rho_ta = 0.1*rho0 # approximate density at turnaround time,
+                              # See eq. 9 in 1801.06138
+            self.fixedw = self.dPdrho(rho_ta)
+        else :
+            self.fixedw = self.dPdrho(rho0)
         self.use_fixedw = True
 
     def H(self, rho) :
@@ -73,6 +78,10 @@ class QCD_EOS:
             P_out = 1/3*rho
             P = P_out + self.H(rho - self.min_rho)*self.H(self.max_rho - rho)*(P_in - P_out)
             return P
+
+    def TofRho(self, rho) :
+        # return T of rho, scaled appropriately at the bounds.
+        return np.exp(self.logT_of_logrho(np.log(rho)))
 
     def P_plot(self):
         # For plotting purpose we generate a fine grid
@@ -111,12 +120,16 @@ class QCD_EOS:
         ax.set_ylabel(r'Derivative, $dP/d\rho$');
         
     def MH(self, T):
-        GoverHc = 6.7e-45
+        # Convert temperature to a horizon mass
+        Goverhc = 6.7e-45 # G in units of MeV^-2
         solarMassperMeV = 1 / 1.12e60
-        return solarMassperMeV* (((8*np.pi*GoverHc) / 3)**(-3/2) * ((np.pi**2 / 30)*self.gOfT(T))**(-1/2) * T**-2)
+        return solarMassperMeV*( (8*np.pi*Goverhc/3)**(-3/2) * (np.pi**2*self.gOfT(T)/30)**(-1/2) * T**-2)
+
     def MH_plot(self):
+        # Plot horizon mass as a function of temperature
+
         # For plotting purpose we generate a fine grid
-        T_grid = np.logspace(1, 6, 1000)
+        T_grid = np.logspace(0, 6, 1000)
 
         fig = plt.figure()
         ax = fig.add_subplot(111)
@@ -125,5 +138,4 @@ class QCD_EOS:
         ax.legend(loc='best')
         ax.set_xlabel(r'Temperature, $T$ (MeV)')
         ax.set_ylabel(r'Horizon Mass');
-        
         
