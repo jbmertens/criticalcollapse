@@ -6,6 +6,7 @@ from scipy import signal
 from scipy.ndimage import gaussian_filter1d
 
 from ms_hm.utils import *
+from ms_hm.QCD_EOS import *
 
 
 class HM:
@@ -19,10 +20,11 @@ class HM:
 
         self.sm_sigma = sm_sigma
 
-        self.w = MS.w
+        self.w0 = MS.w0
         self.A = MS.A[:self.N]
         self.alpha = MS.alpha
 
+        self.qcd = QCD_EOS()
 
         self.t0 = MS.t0
         self.t = self.t0
@@ -41,11 +43,17 @@ class HM:
         self.Q_old = np.zeros(self.N)
         self.Qprime = np.zeros(self.N)
 
+        self.tmp = 0
+        
+        g = self.gamma(self.R, self.m, self.U, self.xi)
+        self.rho_p =  (g + self.Abar * self.R * self.U) / (g - self.w0 * self.Abar * self.R * self.U ) * (self.m + self.Abar * self.R * hm_rho_term(self.R, self.m, self.Abar, self.xi, self.alpha) / 3)
+        
         self.deltau_i = self.cfl_deltau(self.R, self.m, self.U, self.xi) * 0.05
         self.deltau_adap = self.deltau_i
 
         self.mOverR = mOverR
 
+        self.rho_thr = 1e-5
         return
     # convert to half grid
     def to_stg(self,arr):
@@ -58,13 +66,53 @@ class HM:
         return np.sqrt(np.exp(2 * (1 - self.alpha) * xi)
                        + (self.Abar * R)**2 * (U**2 - m))
     def P(self, rho) :
-        return self.w * rho
-    def rho(self, R, m, U, xi, g, xiprime, Rprime, mprime):
-        temp = (g + self.Abar * R * U) / (g - (self.w + self.Q ) * self.Abar * R * U ) \
+        H = np.exp(-self.xi) / self.RH
+        rhob = 3 / (8*np.pi) * H**2
+        realRho = rho * rhob
+        realP = self.qcd.P(realRho)
+        P = realP/rhob
+        return P
+    
+    # return the L2 error in rho
+    def rho_err(self, R, m, U, xi, g, xiprime, Rprime, mprime, P, rho_p):
+        temp = rho_p * g - P * self.Abar * R * U  - (g + self.Abar * R * U)  \
             * (m + self.Abar * R * hm_rho_term(R, m, self.Abar, xi, self.alpha) / 3)
-        #temp = scipy.signal.savgol_filter(temp, 91, 3, mode='interp')
-        temp=gaussian_filter1d(temp, sigma = self.sm_sigma, mode='nearest')
+        #temp = rho_p - (g + self.Abar * R * U) / (g - P/ rho_p * self.Abar * R * U ) \
+        #    * (m + self.Abar * R * hm_rho_term(R, m, self.Abar, xi, self.alpha) / 3)
         return temp
+    
+    def rho_err_prime(self, R, m, U, xi, g, xiprime, Rprime, mprime, dPdrho, rho_p):
+        temp =  g - dPdrho * self.Abar * R * U \
+        #- (g + self.Abar * R * U)  \
+        #   * (m + self.Abar * R * hm_rho_term(R, m, self.Abar, xi, self.alpha) / 3)
+        #print((m + self.Abar * R * hm_rho_term(R, m, self.Abar, xi, self.alpha) / 3))
+        #print(np.abs(temp).min())
+        
+        #print( [(rho_p * g)[0] , (dPdrho * self.Abar * R * U)[0], (g + self.Abar * R * U)[0], (m + self.Abar * R * hm_rho_term(R, m, self.Abar, xi, self.alpha) / 3)[0]  ] )
+        self.tmp = temp
+        return temp
+    
+    def rho(self, R, m, U, xi, g, xiprime, Rprime, mprime):
+        H = np.exp(-self.xi) / self.RH
+        rhob = 3 / (8*np.pi) * H**2
+        P = self.qcd.P(self.rho_p * rhob) / rhob
+        
+        err = self.rho_err(R, m, U, xi, g, xiprime, Rprime, mprime, P, self.rho_p)
+        while( np.linalg.norm(err) > 1e-5):
+            print(np.linalg.norm(err))
+            dPdrho = self.qcd.dPdrho(self.rho_p * rhob)
+            #print(dPdrho)
+            self.rho_p = self.rho_p - err / \
+                self.rho_err_prime(R, m, U, xi, g, xiprime, Rprime, mprime, dPdrho, self.rho_p)
+            #print(self.rho_p)
+            err = self.rho_err(R, m, U, xi, g, xiprime, Rprime, mprime, P, self.rho_p)
+        
+        #temp = scipy.signal.savgol_filter(temp, 91, 3, mode='interp')
+        
+        self.rho_p=gaussian_filter1d(self.rho_p, sigma = self.sm_sigma, mode='nearest')
+        
+        
+        return self.rho_p
 
     def rho_stg(self, R, m, U, xi, g, xiprime, Rprime, mprime):
         R_stg = self.to_stg(R)
@@ -77,11 +125,13 @@ class HM:
         #g_stg = WENO_to_stg(g)
         A_stg = self.Abar_stg
 
-        if self.Q.shape[0] > 1:
-            Q_stg = self.to_stg(self.Q)
-        else:
-            Q_stg = self.Q
 
+        H = np.exp(-self.xi) / self.RH
+        rhob = 3 / (8*np.pi) * H**2
+        P = self.qcd.P(rho_p * rhob) / rhob
+        
+        err = rho_err(R, m, U, xi, g, xiprime, Rprime, mprime, P, rho_p)
+        
         temp = (g_stg + A_stg * R_stg * U_stg) / (g_stg - (self.w + Q_stg ) * A_stg * R_stg * U_stg ) \
             * (m_stg + A_stg * R_stg * rho_term_stg(R, m, self.Abar, xi, R_stg, m_stg, A_stg, self.alpha) / 3)
         #temp = scipy.signal.savgol_filter(temp, 31, 3, mode='interp')
@@ -93,9 +143,9 @@ class HM:
     def elambda(self, ephi, exi, xiprime):
         return self.alpha * ephi * exi * xiprime
 
-    def epsi(self, R, U, g, xi, rho, ephi):
-        c = self.alpha - 1 + ephi * self.Abar * R * rho * (1 + self.w + self.Q) /\
-            ((g + self.Abar * R * U) * (1+self.w))
+    def epsi(self, R, U, g, xi, rho, ephi, w):
+        c = self.alpha - 1 + ephi * self.Abar * R * rho * (1 + w) /\
+            ((g + self.Abar * R * U) * (1+self.w0))
         offset = np.log(1/ephi[-1] * (g[-1] + self.Abar[-1] * R[-1] * U[-1]))
         temp = inv_derv_psi(xi, c, offset)
         return  (g + self.Abar * R * U) / np.exp(temp)
@@ -104,7 +154,22 @@ class HM:
         rho_stg = self.rho_stg(R, m, U, xi, g, xip, Rp, mp)
         return np.concatenate( ([0], stg_dfdA(rho_stg, self.to_stg(self.Abar)) ,[0]) )
 
+    def get_Q(self,  R, m, U, xi):
+        xiprime = WENO_dfdA(xi, self.Abar, 1e100)
+        Rprime = WENO_dfdA(R, self.Abar, 1e100)
+        mprime = WENO_dfdA(m, self.Abar, 1e100)
+        Uprime = WENO_dfdA(U, self.Abar, 1e100)
 
+        #xiprime = WENO_nuni_dfdA(xi, self.Vbar, self.Abar, 1e100)
+        #Rprime = WENO_nuni_dfdA(R, self.Vbar, self.Abar, 1e100)
+        #mprime = WENO_nuni_dfdA(m, self.Vbar, self.Abar, 1e100)
+        #Uprime = WENO_nuni_dfdA(U, self.Vbar, self.Abar, 1e100)
+
+        g = self.gamma(R, m, U, xi)
+        r = self.rho(R, m, U, xi, g, xiprime, Rprime, mprime)
+        p = self.P(r)
+        self.Q_old = p / r
+        
     def k_coeffs(self, R, m, U, xi) :
         xiprime = WENO_dfdA(xi, self.Abar, 1e100)
         Rprime = WENO_dfdA(R, self.Abar, 1e100)
@@ -120,17 +185,18 @@ class HM:
         r = self.rho(R, m, U, xi, g, xiprime, Rprime, mprime)
         p = self.P(r)
         Q = p / r
+        Q_du = (Q - self.Q_old) / self.deltau
         Qprime = dfdA (Q, self.Abar, 1e100)
         exi = np.exp(xi)
         ephi = self.ephi(R, U, g, xi, xiprime, Rprime)
         elambda = self.elambda(ephi, exi, xiprime)
-        epsi = self.epsi(R, U, g, xi, r, ephi)
+        epsi = self.epsi(R, U, g, xi, r, ephi, p / r)
         rb =  3 / (8*np.pi) * (elambda**(1/2) * dfdA(np.log(epsi), self.Abar,1e100))**2
 
 
-        drho = self.drho(R, m, U, g, xi, Rprime, mprime, xiprime)
-        #drho  = dfdA(r, self.Abar, 1e100)
-        drho[0] = 3 * elambda[0] / exi[0] * ((1 + self.w) * r[0] / ephi[0] - (r[0] + p[0]) * U[0])
+        #drho = self.drho(R, m, U, g, xi, Rprime, mprime, xiprime)
+        drho  = dfdA(r, self.Abar, 1e100)
+        drho[0] = 3 * elambda[0] / exi[0] * ((1 + self.w0) * r[0] / ephi[0] - (r[0] + p[0]) * U[0])
         drho[-1] = 0
 
         kxi = epsi / ephi / np.exp(xi) / self.alpha
@@ -139,12 +205,12 @@ class HM:
 
         km = 3 * epsi / exi * (1/ephi * m - U * (p +m))
 
-        kU = - epsi / exi / (1 - self.Q) * (
+        kU = - epsi / exi / (1 - Q) * (
             (m + 3 * p) / 2 + U**2 - U / self.alpha / ephi
         + (Q) * exi / elambda * Uprime + g * (Q) / ( np.concatenate( ([1], self.Abar[1:]) ) \
                                                                                 * R * (1 + Q)) * (
-            3 * Q * U + exi * (Qprime / elambda - self.Q_du / epsi) / (Q)
-         + 3 * (1) * (U - 1 / ephi) + exi / elambda * drho / r) )
+            3 * Q * U + exi * (Qprime / elambda - Q_du / epsi) / (Q)
+         + 3 * (1 + self.w0) * (U - 1 / ephi) + exi / elambda * drho / r) )
 
         # boundary conditions
         kxi[0] = epsi[0] / elambda[0] * (xi[1] - xi[0]) / ( (self.Abar[1] - self.Abar[0]) )
@@ -159,6 +225,8 @@ class HM:
         step = 0
 
         deltau = self.deltau_adap
+        self.deltau = deltau
+
         kxi1, kR1, km1, kU1 = self.k_coeffs(self.R, self.m, self.U,  self.xi)
         while(step < n_steps) :
             if(step % 200 == 0) :
@@ -171,6 +239,7 @@ class HM:
                 print('2m/R is larger than ' + str(self.mOverR))
                 return 1
 
+            self.deltau = deltau
             kxi2, kR2, km2, kU2 = self.k_coeffs(self.R + deltau/2*kR1, self.m + deltau/2*km1,
                                                  self.U + deltau/2*kU1, self.xi + deltau/2*kxi1)
             kxi3, kR3, km3, kU3 = self.k_coeffs(self.R + 3*deltau/4*kR2, self.m + 3*deltau/4*km2,
@@ -220,16 +289,17 @@ class HM:
         step = 0
 
         deltau = self.deltau_i
+        self.deltau = deltau
         while(step < n_steps) :
             if(adj_intv > 0 and step % adj_intv == 0):
                 deltau = self.cfl_deltau(self.R, self.m, self.U, self.xi) * 0.05
-
+            self.deltau = deltau
             #der_U = dfdA(np.exp(self.xi * (self.alpha-1)) * self.Abar * self.R * self.U , self.Abar, 1e100)
 
             #self.Q = self.kappa * (self.Abar[1])**2 * der_U**2
-            Q = self.w*np.ones_like(p)
+            #Q = self.w*np.ones_like(p)
             #self.Qprime = dfdA(self.Q , self.Abar, 1e100)
-            self.Q_du = (Q - self.Q_old) / deltau
+            #self.Q_du = (Q - self.Q_old) / deltau
 
             #self.Q[der_U > 0] = 0
             #self.Qprime[der_U>0] = 0
@@ -248,8 +318,7 @@ class HM:
             self.m = self.m + (deltau/6*(km1 + 2*km2 + 2*km3 + km4))
             self.U = self.U + (deltau/6*(kU1 + 2*kU2 + 2*kU3 + kU4))
 
-            self.Q_old = Q
-
+            self.get_Q(self.R, self.m, self.U, self.xi)
             step+=1
             self.u += deltau
 
@@ -281,7 +350,7 @@ class HM:
 
         a = np.exp(self.alpha * self.xi)
         H = np.exp(-self.xi) / self.RH
-        rho_b = a**(1+self.w)
+        rho_b = a**(1+self.w0)
         Rb = a * self.A
 
         return (( (np.exp(-self.xi/2) * self.R **3 * self.Abar**3 * self.m ) / 2 )[pos])
@@ -309,5 +378,5 @@ class HM:
         exi = np.exp(xi)
         ephi = self.ephi(R, U, g, xi, xiprime, Rprime)
         elambda = self.elambda(ephi, exi, xiprime)
-        epsi = self.epsi(R, U, g, xi, r, ephi)
-        return ((1 / np.sqrt(self.w) - 1)  * (self.Abar[1] - self.Abar[0]) * elambda / epsi).min()
+        epsi = self.epsi(R, U, g, xi, r, ephi, self.w0)
+        return ((1 / np.sqrt(self.w0) - 1)  * (self.Abar[1] - self.Abar[0]) * elambda / epsi).min()
