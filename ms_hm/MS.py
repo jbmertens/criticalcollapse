@@ -302,7 +302,7 @@ class MS:
             if (self.BH_wont_form() == True) :
                 return -2
 
-            if(self.to_idx(self.Abar_p) > 50 and self.to_idx(self.Abar_p) < self.N )
+            if(self.to_idx(self.Abar_p) > 50 and self.to_idx(self.Abar_p) < self.N ):
                 self.exec_pos = np.max([self.exec_pos, self.to_idx(self.Abar_p) - 10])
 
             # when density perturbation enters the cosmic horizon
