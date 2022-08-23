@@ -12,7 +12,7 @@ from ms_hm.QCD_EOS import *
 class HM:
 
     def __init__(self, MS, mOverR=0.999, sm_sigma=5):
-
+        
         self.R = MS.R_hm
         self.m = MS.m_hm
         self.U = MS.U_hm
@@ -111,7 +111,7 @@ class HM:
         
         err = self.rho_err(R, m, U, xi, g, xiprime, Rprime, mprime, P, self.rho_p)
         while( np.linalg.norm(err) > 1e-5):
-            print(np.linalg.norm(err))
+            #print(np.linalg.norm(err))
             dPdrho = self.qcd.dPdrho(self.rho_p * rhob)
             #print(dPdrho)
             self.rho_p = self.rho_p - err / \
@@ -288,6 +288,7 @@ class HM:
                 kU1 = np.copy(kU4)
 
                 step+=1
+                self.get_Q(self.R, self.m, self.U, self.xi)
                 self.u += deltau
 
             # Adjust step size.
@@ -302,6 +303,7 @@ class HM:
 
         deltau = self.deltau_i
         self.deltau = deltau
+        self.get_Q(self.R, self.m, self.U, self.xi)
         while(step < n_steps) :
             if(adj_intv > 0 and step % adj_intv == 0):
                 deltau = self.cfl_deltau(self.R, self.m, self.U, self.xi) * 0.05
