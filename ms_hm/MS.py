@@ -45,8 +45,8 @@ class MS:
             print("Initial w is", self.w0, "and Horizon radius is", self.RH)
 
         # Initial field values
-        delta0 = amp * np.exp(-Abar**2 / 2 / (1.6)**2)
-        delta0P = amp * delta0 * 2 * (-1 / 2 / (1.6)**2 ) * Abar
+        delta0 = amp * np.exp(-Abar**2 / 2 / (2.0)**2)
+        delta0P = amp * delta0 * 2 * (-1 / 2 / (2.0)**2 ) * Abar
         self.m = 1 + delta0
         self.U = 1 - self.alpha * delta0 / 2
         self.R = 1 - self.alpha / 2 * (delta0 + self.w0 * Abar * delta0P / (1 + 3 * self.w0) )

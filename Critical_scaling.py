@@ -182,9 +182,9 @@ def find_mass(Abar, rho0, amp, is_searching_for_crit=False, default_steps=150000
     return (ms.delta, hm.BH_mass2())
 
 
-n = 2500
+n = 800
 Abar = mix_grid(np.log10(1.5), np.log10(40), n)
 rho0 = float(sys.argv[1]) # initial density value in MeV^4
 fixw = bool(int(sys.argv[2]))
 print("Running simulation with rho0 =", rho0, "and fixw =", fixw)
-find_crit(Abar, rho0, 0.15, 0.3, fixw=fixw)
+find_crit(Abar, rho0, 0.15, 0.3, fixw=fixw,sm_sigma=2.0)
