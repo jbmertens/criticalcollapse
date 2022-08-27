@@ -88,17 +88,17 @@ class MS:
         self.BH_threshold = BH_threshold
         self.field_max = 0
         self.delta = -1
-        
-    
+
+
     # convert to half grid
     def to_stg(self,arr):
         return (arr[0:-1] + arr[1:]) / 2
-    
+
     def to_cubic_stg(self,arr):
         a1 = arr[0:-1] ** 3
         a2 = arr[1:] ** 3
         return (a1 + a2) / (np.abs(a1 + a2)) * ( np.abs(a1 + a2)/ 2) **(1/3)
-    
+
     def to_idx(self, pos):
         return np.searchsorted(self.Abar, pos, "right") - 1
 
@@ -211,29 +211,29 @@ class MS:
             r = self.rho(self.R, self.m)
             plt.semilogy(self.Abar, r)
             plt.title("Density rho")
-            
+
             #Third figure shows R
             plt.figure(3)
             plt.semilogy(self.R)
             plt.title("R")
-            
+
             #Fourth figure shows 2m/R
             plt.figure(4)
             plt.semilogy(self.Abar, self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi))
             plt.title("2m/R")
-            
+
             #Fifth figure shows Pprime
             plt.figure(5)
             Pprime = self.Pprime(self.R, self.m)
             plt.plot(Pprime)
             plt.title("Pprime")
-            
+
             #Sixth figure shows P
             plt.figure(6)
             p = self.P(self.rho(self.R, self.m))
             plt.semilogy(p)
             plt.title("P")
-            
+
             #Seventh figure shows psi
             plt.figure(7)
             psi = self.psi(r, p, Pprime)
@@ -242,7 +242,7 @@ class MS:
 
         # Plot additional fields if force_plot is true
         if force_plot or self.movie_plot_interval > 0 :
-            
+
             a = np.exp(self.alpha * self.xi)
             H = np.exp(-self.xi) / self.RH
 
@@ -285,7 +285,7 @@ class MS:
 
     def run_steps(self, n_steps) :
         """
-        
+
         """
         deltau = self.deltau_i
         if(self.trace_ray == True):
@@ -297,12 +297,12 @@ class MS:
 
             # Plot things every so often
             self.plot_fields()
-            
+
             # Stop running if it becomes clear a BH won't form
             if (self.BH_wont_form() == True) :
                 return -2
 
-            if(self.to_idx(self.Abar_p) > 50 and self.to_idx(self.Abar_p) < self.N * 0.8):
+            if(self.to_idx(self.Abar_p) > 50 and self.to_idx(self.Abar_p) < self.N ):
                 self.exec_pos = np.max([self.exec_pos, self.to_idx(self.Abar_p) - 10])
 
             # when density perturbation enters the cosmic horizon
