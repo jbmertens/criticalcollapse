@@ -2,7 +2,7 @@
 
 for EXPONENT in {0..20}
 do
-	for fixw in 0 1
+	for fixw in 0 1 2
 	do
 		for AMP in 1.0 1.259 1.585 1.995 2.511 3.162 3.981 5.012 6.310 7.943
 		do

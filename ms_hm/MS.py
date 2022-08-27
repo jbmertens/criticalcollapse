@@ -21,7 +21,7 @@ class MS:
 
     def __init__(self, Abar, rho0, amp,
                  trace_ray=False, BH_threshold=1, dt_frac=0.025, sm_sigma=0.0,
-                 plot_interval=-1, fixw=False):
+                 plot_interval=-1, fixw=False, use_turnaround=False):
 
         # Initial coordinate grid & number of grid points
         self.Abar = Abar
@@ -31,7 +31,7 @@ class MS:
         # Equation of state & background information
         self.qcd = QCD_EOS()
         if fixw :
-            self.qcd.fix_w(rho0)
+            self.qcd.fix_w(rho0, use_turnaround)
         self.w0 = self.qcd.P(rho0)/rho0
         self.alpha = (2/3)/(1 + self.w0)
         self.t0 = self.alpha * np.sqrt(3 / (8*np.pi*rho0))
