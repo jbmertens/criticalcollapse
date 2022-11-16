@@ -12,16 +12,16 @@ from cython.parallel import prange
 
 # first derivative
 @cython.boundscheck(False)  # Deactivate bounds checking
-cpdef dfdA(np.ndarray arr, double [::1] A, double bd = 0, int exec_pos = -1):
+cpdef dfdA(np.ndarray arr, double [::1] A, double bd = 0, int exc_pos = -1):
     cdef int size = arr.shape[0]
     cdef double [:] f = arr
     cdef double [:] res =  np.zeros(size, dtype=np.double)
 
     cdef int i
-    for i in prange(exec_pos+2, size - 1,nogil=True):
+    for i in prange(exc_pos+2, size - 1,nogil=True):
         res[i] = (f[i+1] - f[i-1]) / (A[i+1] - A[i-1])
-    if(exec_pos > -1):
-        res[exec_pos+1] = (f[exec_pos+2] - f[exec_pos+1]) / (A[exec_pos+2]-A[exec_pos+1])
+    if(exc_pos > -1):
+        res[exc_pos+1] = (f[exc_pos+2] - f[exc_pos+1]) / (A[exc_pos+2]-A[exc_pos+1])
     elif(bd < 1e99): # if bd value is valid, set 0th component to bd
         res[0] = bd
     else: # invalid bd value, so use one-side derivative
@@ -115,7 +115,7 @@ cpdef WENO_to_stg(np.ndarray arr):
     return np.asarray(st_f)
 
 @cython.boundscheck(False)  # Deactivate bounds checking
-cpdef inv_derv_phi(np.ndarray rho_in, double [:] P, double off_set=0, int exec_pos = -1):
+cpdef inv_derv_phi(np.ndarray rho_in, double [:] P, double off_set=0, int exc_pos = -1):
     cdef int size = rho_in.shape[0]
     cdef double [:] rho = rho_in
     cdef double [:] res =  np.zeros(size, dtype=np.double)
@@ -155,7 +155,7 @@ cpdef inv_derv_psi( np.ndarray xi_in, double [::1] c, double off_set=0):
     return np.asarray(res)
 
 @cython.boundscheck(False)  # Deactivate bounds checking
-cpdef find_exec_pos(np.ndarray arr):
+cpdef find_exc_pos(np.ndarray arr):
     cdef int size = arr.shape[0]
     cdef double [:] f = arr
 

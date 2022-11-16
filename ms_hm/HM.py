@@ -10,14 +10,27 @@ from ms_hm.QCD_EOS import *
 
 
 class HM:
+    """
+    Class to integrate the Hernandez-Misner equations to study
+    critical collapse of a fluid to a black hole.
+
+    Equations integrated are 166a - 166d in
+    https://arxiv.org/pdf/1504.02071.pdf .
+    These have been slightly modified to allow for a general
+    (local, temperature-dependent) pressure term.
+    """
 
     def __init__(self, MS, mOverR=0.999, sm_sigma=5):
         
-        self.R = MS.R_hm
-        self.m = MS.m_hm
-        self.U = MS.U_hm
-        self.xi = MS.xi_hm
-        self.N = MS.R_hm.shape[0]
+        R = MS.R_hm
+        # Try to work in case raytracing didn't finish
+        self.N = np.max(np.where(R>0))
+
+        self.R = MS.R_hm[:self.N]
+        self.m = MS.m_hm[:self.N]
+        self.U = MS.U_hm[:self.N]
+        self.xi = MS.xi_hm[:self.N]
+        self.rho_p = MS.rho_hm[:self.N]
 
         self.sm_sigma = sm_sigma
 
@@ -38,9 +51,6 @@ class HM:
 
         self.Abar = MS.Abar[:self.N]
         self.Abar_stg = self.to_stg(self.Abar)
-        #self.Abar_stg = WENO_to_stg(self.Abar)
-        # self.Vbar = np.concatenate(
-        #     ([MS.Abar[1] ], (MS.Abar[2:] - MS.Abar[0:self.N-1]) / 2) )
 
         # self.kappa = 2
         self.Q = np.zeros(self.N)
@@ -50,15 +60,13 @@ class HM:
 
         self.tmp = 0
         
-        g = self.gamma(self.R, self.m, self.U, self.xi)
-        self.rho_p =  (g + self.Abar * self.R * self.U) / (g - self.w0 * self.Abar * self.R * self.U ) * (self.m + self.Abar * self.R * hm_rho_term(self.R, self.m, self.Abar, self.xi, self.alpha) / 3)
-        
         self.deltau_i = self.cfl_deltau(self.R, self.m, self.U, self.xi) * 0.05
         self.deltau_adap = self.deltau_i
 
         self.mOverR = mOverR
 
-        self.rho_thr = 1e-5
+        self.step = 0
+
         return
 
     # convert to half grid
@@ -89,7 +97,7 @@ class HM:
     def rho_err(self, R, m, U, xi, g, xiprime, Rprime, mprime, P, rho_p):
         temp = rho_p * g - P * self.Abar * R * U  - (g + self.Abar * R * U)  \
             * (m + self.Abar * R * hm_rho_term(R, m, self.Abar, xi, self.alpha) / 3)
-        #temp = rho_p - (g + self.Abar * R * U) / (g - P/ rho_p * self.Abar * R * U ) \
+        # temp = rho_p - (g + self.Abar * R * U) / (g - P/rho_p * self.Abar * R * U ) \
         #    * (m + self.Abar * R * hm_rho_term(R, m, self.Abar, xi, self.alpha) / 3)
         return temp
     
@@ -105,24 +113,30 @@ class HM:
         return temp
     
     def rho(self, R, m, U, xi, g, xiprime, Rprime, mprime):
+
         H = np.exp(-self.xi) / self.RH
         rhob = 3 / (8*np.pi) * H**2
-        P = self.qcd.P(self.rho_p * rhob) / rhob
         
-        err = self.rho_err(R, m, U, xi, g, xiprime, Rprime, mprime, P, self.rho_p)
-        while( np.linalg.norm(err) > 1e-5):
-            #print(np.linalg.norm(err))
+        err = np.ones_like(R)
+
+        while( np.linalg.norm(err) > 1e-7 ):
+            # print(np.linalg.norm(err))
+
+            # Iterative method (slower)
+            # P = self.qcd.P(self.rho_p * rhob) / rhob
+            # rho_std = (g + self.Abar * R * U) / (g - P/self.rho_p * self.Abar * R * U ) \
+            #    * (m + self.Abar * R * hm_rho_term(R, m, self.Abar, xi, self.alpha) / 3)
+            # err = rho_std - self.rho_p
+            # self.rho_p = rho_std
+
+            # Newton's method
             dPdrho = self.qcd.dPdrho(self.rho_p * rhob)
-            #print(dPdrho)
-            self.rho_p = self.rho_p - err / \
-                self.rho_err_prime(R, m, U, xi, g, xiprime, Rprime, mprime, dPdrho, self.rho_p)
-            #print(self.rho_p)
+            P = self.qcd.P(self.rho_p * rhob) / rhob
             err = self.rho_err(R, m, U, xi, g, xiprime, Rprime, mprime, P, self.rho_p)
+            err_prime = self.rho_err_prime(R, m, U, xi, g, xiprime, Rprime, mprime, dPdrho, self.rho_p)
+            self.rho_p = self.rho_p - err / err_prime
         
-        #temp = scipy.signal.savgol_filter(temp, 91, 3, mode='interp')
-        
-        self.rho_p=gaussian_filter1d(self.rho_p, sigma = self.sm_sigma, mode='nearest')
-        
+        self.rho_p = gaussian_filter1d(self.rho_p, sigma=self.sm_sigma, mode='nearest')
         
         return self.rho_p
 
@@ -155,8 +169,8 @@ class HM:
     def elambda(self, ephi, exi, xiprime):
         return self.alpha * ephi * exi * xiprime
 
-    def epsi(self, R, U, g, xi, rho, ephi, w):
-        c = self.alpha - 1 + ephi * self.Abar * R * rho * (1 + w) /\
+    def epsi(self, R, U, g, xi, rho, ephi, Q):
+        c = self.alpha - 1 + ephi * self.Abar * R * rho * (1 + Q) /\
             ((g + self.Abar * R * U) * (1+self.w0))
         offset = np.log(1/ephi[-1] * (g[-1] + self.Abar[-1] * R[-1] * U[-1]))
         temp = inv_derv_psi(xi, c, offset)
@@ -166,7 +180,7 @@ class HM:
         rho_stg = self.rho_stg(R, m, U, xi, g, xip, Rp, mp)
         return np.concatenate( ([0], stg_dfdA(rho_stg, self.to_stg(self.Abar)) ,[0]) )
 
-    def get_Q(self,  R, m, U, xi):
+    def set_Q_old(self,  R, m, U, xi):
         xiprime = WENO_dfdA(xi, self.Abar, 1e100)
         Rprime = WENO_dfdA(R, self.Abar, 1e100)
         mprime = WENO_dfdA(m, self.Abar, 1e100)
@@ -183,6 +197,7 @@ class HM:
         self.Q_old = p / r
         
     def k_coeffs(self, R, m, U, xi) :
+
         xiprime = WENO_dfdA(xi, self.Abar, 1e100)
         Rprime = WENO_dfdA(R, self.Abar, 1e100)
         mprime = WENO_dfdA(m, self.Abar, 1e100)
@@ -198,15 +213,13 @@ class HM:
         p = self.P(r)
         Q = p / r
         Q_du = (Q - self.Q_old) / self.deltau
-        Qprime = dfdA (Q, self.Abar, 1e100)
+        Qprime = dfdA(Q, self.Abar, 1e100)
         exi = np.exp(xi)
         ephi = self.ephi(R, U, g, xi, xiprime, Rprime)
         elambda = self.elambda(ephi, exi, xiprime)
         epsi = self.epsi(R, U, g, xi, r, ephi, p / r)
-        rb =  3 / (8*np.pi) * (elambda**(1/2) * dfdA(np.log(epsi), self.Abar,1e100))**2
 
-
-        #drho = self.drho(R, m, U, g, xi, Rprime, mprime, xiprime)
+        # drho = self.drho(R, m, U, g, xi, Rprime, mprime, xiprime)
         drho  = dfdA(r, self.Abar, 1e100)
         drho[0] = 3 * elambda[0] / exi[0] * ((1 + self.w0) * r[0] / ephi[0] - (r[0] + p[0]) * U[0])
         drho[-1] = 0
@@ -215,14 +228,15 @@ class HM:
 
         kR = epsi / exi * R * (U - 1/ephi)
 
-        km = 3 * epsi / exi * (1/ephi * m - U * (p +m))
+        km = 3 * epsi / exi * (1/ephi * m * (1+self.w0) - U * (p +m))
 
         kU = - epsi / exi / (1 - Q) * (
             (m + 3 * p) / 2 + U**2 - U / self.alpha / ephi
-        + (Q) * exi / elambda * Uprime + g * (Q) / ( np.concatenate( ([1], self.Abar[1:]) ) \
+            + (Q) * exi / elambda * Uprime + g * (Q) / ( np.concatenate( ([1], self.Abar[1:]) ) \
                                                                                 * R * (1 + Q)) * (
-            3 * Q * U + exi * (Qprime / elambda - Q_du / epsi) / (Q)
-         + 3 * (1 + self.w0) * (U - 1 / ephi) + exi / elambda * drho / r) )
+                3 * (1 + Q) * U + exi * (Qprime / elambda - Q_du / epsi) / (Q)
+            - 3 * (1 + self.w0) * (1 / ephi) + exi / elambda * drho / r)
+        )
 
         # boundary conditions
         kxi[0] = epsi[0] / elambda[0] * (xi[1] - xi[0]) / ( (self.Abar[1] - self.Abar[0]) )
@@ -234,21 +248,21 @@ class HM:
 
     def adap_run_steps(self,n_steps, adj_intv=-1, tol=1e-7) :
 
-        step = 0
-
         deltau = self.deltau_adap
         self.deltau = deltau
+        self.set_Q_old(self.R, self.m, self.U, self.xi)
 
         kxi1, kR1, km1, kU1 = self.k_coeffs(self.R, self.m, self.U,  self.xi)
-        while(step < n_steps) :
-            if(step % 200 == 0) :
+
+        while(self.step < n_steps) :
+            # if(self.step % 200 == 0) : 
                 #plt.plot(np.sqrt(np.exp(2 * (1 - self.alpha) * self.xi)))
-                plt.semilogy(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi))
+                # plt.semilogy(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi))
             if (deltau < 1e-10):
                 print("Warning, the time step is too small!")
                 break
             if((self.R**2 * self.m * self.Abar**2 * np.exp(2*(self.alpha-1)*self.xi)).max() > self.mOverR):
-                print('2m/R is larger than ' + str(self.mOverR))
+                print('2m/R is larger than', str(self.mOverR), "at step", self.step)
                 return 1
 
             self.deltau = deltau
@@ -287,8 +301,8 @@ class HM:
                 km1 = np.copy(km4)
                 kU1 = np.copy(kU4)
 
-                step+=1
-                self.get_Q(self.R, self.m, self.U, self.xi)
+                self.step += 1
+                self.set_Q_old(self.R, self.m, self.U, self.xi)
                 self.u += deltau
 
             # Adjust step size.
@@ -298,15 +312,21 @@ class HM:
             self.deltau_adap = deltau
 
 
-    def run_steps(self,n_steps, adj_intv=-1) :
-        step = 0
+    def run_steps(self, n_steps, adj_intv=-1) :
 
         deltau = self.deltau_i
         self.deltau = deltau
-        self.get_Q(self.R, self.m, self.U, self.xi)
-        while(step < n_steps) :
-            if(adj_intv > 0 and step % adj_intv == 0):
+        self.set_Q_old(self.R, self.m, self.U, self.xi)
+
+        while(self.step < n_steps) :
+
+            if((self.R**2 * self.m * self.Abar**2 * np.exp(2*(self.alpha-1)*self.xi)).max() > self.mOverR):
+                print('2m/R is larger than ' + str(self.mOverR))
+                return 1
+
+            if(adj_intv > 0 and self.step % adj_intv == 0):
                 deltau = self.cfl_deltau(self.R, self.m, self.U, self.xi) * 0.05
+
             self.deltau = deltau
             #der_U = dfdA(np.exp(self.xi * (self.alpha-1)) * self.Abar * self.R * self.U , self.Abar, 1e100)
 
@@ -327,13 +347,15 @@ class HM:
             kxi4, kR4, km4, kU4 = self.k_coeffs(self.R + deltau*kR3, self.m + deltau*km3,
                                                  self.U + deltau*kU3,  self.xi + deltau*kxi3)
 
+            # print(deltau, ((kU1 + 2*kU2 + 2*kU3 + kU4)), self.U)
+
             self.xi = self.xi + (deltau/6*(kxi1 + 2*kxi2 + 2*kxi3 + kxi4))
             self.R = self.R + (deltau/6*(kR1 + 2*kR2 + 2*kR3 + kR4))
             self.m = self.m + (deltau/6*(km1 + 2*km2 + 2*km3 + km4))
             self.U = self.U + (deltau/6*(kU1 + 2*kU2 + 2*kU3 + kU4))
 
-            self.get_Q(self.R, self.m, self.U, self.xi)
-            step+=1
+            self.set_Q_old(self.R, self.m, self.U, self.xi)
+            self.step += 1
             self.u += deltau
 
     def BH_mass(self):
@@ -381,10 +403,10 @@ class HM:
         return (( (np.exp(-self.xi/2) * self.R **3 * self.Abar**3 * self.m ) / 2 )[mOverR.argmax()])
 
 
-    def cfl_deltau(self,R, m, U, xi):
-        xiprime = dfdA(xi, self.Abar, 1e100)
-        Rprime = dfdA(R, self.Abar, 1e100)
-        mprime = dfdA(m, self.Abar, 1e100)
+    def cfl_deltau(self, R, m, U, xi):
+        xiprime = WENO_dfdA(xi, self.Abar, 1e100)
+        Rprime = WENO_dfdA(R, self.Abar, 1e100)
+        mprime = WENO_dfdA(m, self.Abar, 1e100)
 
         g = self.gamma(R, m, U, xi)
         r = self.rho(R, m, U, xi, g, xiprime, Rprime, mprime)
