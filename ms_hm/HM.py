@@ -6,8 +6,10 @@ from scipy import signal
 from scipy.ndimage import gaussian_filter1d
 
 from ms_hm.utils import *
-from ms_hm.QCD_EOS import *
 
+from ipywidgets import HTML
+from IPython.display import display
+import time
 
 class HM:
     """
@@ -20,10 +22,11 @@ class HM:
     (local, temperature-dependent) pressure term.
     """
 
-    def __init__(self, MS, mOverR=0.999, sm_sigma=5):
+    def __init__(self, MS, mOverR=0.999, sm_sigma=5,
+        Abar=None, cflfac=0.2):
         
-        R = MS.R_hm
         # Try to work in case raytracing didn't finish
+        R = MS.R_hm
         self.N = np.max(np.where(R>0))
 
         self.R = MS.R_hm[:self.N]
@@ -31,14 +34,27 @@ class HM:
         self.U = MS.U_hm[:self.N]
         self.xi = MS.xi_hm[:self.N]
         self.rho_p = MS.rho_hm[:self.N]
+        self.Abar = MS.Abar[:self.N]
 
+        if Abar is not None :
+            print("Computing field values at specified Abar")
+            Abar_max = np.searchsorted(Abar, self.Abar[-1], "left")
+
+            self.R = np.interp(Abar[:Abar_max], self.Abar, self.R)
+            self.m = np.interp(Abar[:Abar_max], self.Abar, self.m)
+            self.U = np.interp(Abar[:Abar_max], self.Abar, self.U)
+            self.xi = np.interp(Abar[:Abar_max], self.Abar, self.xi)
+            self.rho_p = np.interp(Abar[:Abar_max], self.Abar, self.rho_p)
+            self.Abar = Abar[:Abar_max]
+
+        self.Abar_stg = self.to_stg(self.Abar)
+        
         self.sm_sigma = sm_sigma
 
         self.w0 = MS.w0
-        self.A = MS.A[:self.N]
         self.alpha = MS.alpha
 
-        self.qcd = QCD_EOS()
+        self.qcd = MS.qcd
 
         self.t0 = MS.t0
         self.t = self.t0
@@ -49,9 +65,6 @@ class HM:
         self.w0 = MS.w0
         self.alpha = MS.alpha
 
-        self.Abar = MS.Abar[:self.N]
-        self.Abar_stg = self.to_stg(self.Abar)
-
         # self.kappa = 2
         self.Q = np.zeros(self.N)
         self.Q_du = np.zeros(self.N)
@@ -60,12 +73,16 @@ class HM:
 
         self.tmp = 0
         
-        self.deltau_i = self.cfl_deltau(self.R, self.m, self.U, self.xi) * 0.05
+        self.deltau_i = self.cfl_deltau(self.R, self.m, self.U, self.xi) * cflfac
         self.deltau_adap = self.deltau_i
 
         self.mOverR = mOverR
 
         self.step = 0
+
+        self.start_time = time.process_time()
+        self.display = HTML(value="Running HM simulation.")
+        display(self.display)
 
         return
 
@@ -119,7 +136,7 @@ class HM:
         
         err = np.ones_like(R)
 
-        while( np.linalg.norm(err) > 1e-7 ):
+        while( np.linalg.norm(err) > 1e-5 ):
             # print(np.linalg.norm(err))
 
             # Iterative method (slower)
@@ -137,7 +154,12 @@ class HM:
             self.rho_p = self.rho_p - err / err_prime
         
         self.rho_p = gaussian_filter1d(self.rho_p, sigma=self.sm_sigma, mode='nearest')
-        
+
+        if(len(self.rho_p[self.rho_p<=0]) > 0) :
+            self.rho_p[self.rho_p<=0] = 1.0e-10
+            # plt.plot(self.rho_p)
+            # raise ValueError('Rho is negative.')
+
         return self.rho_p
 
     def rho_stg(self, R, m, U, xi, g, xiprime, Rprime, mprime):
@@ -150,7 +172,6 @@ class HM:
         #U_stg = WENO_to_stg(U)
         #g_stg = WENO_to_stg(g)
         A_stg = self.Abar_stg
-
 
         H = np.exp(-self.xi) / self.RH
         rhob = 3 / (8*np.pi) * H**2
@@ -261,9 +282,16 @@ class HM:
             if (deltau < 1e-10):
                 print("Warning, the time step is too small!")
                 break
-            if((self.R**2 * self.m * self.Abar**2 * np.exp(2*(self.alpha-1)*self.xi)).max() > self.mOverR):
-                print('2m/R is larger than', str(self.mOverR), "at step", self.step)
+
+            max2mOverR = (self.R**2 * self.m * self.Abar**2 * np.exp(2*(self.alpha-1)*self.xi)).max()
+            if(max2mOverR > self.mOverR):
+                print('2m/R is larger than ' + str(self.mOverR))
                 return 1
+            if(self.step%20==0) :
+                self.display.value = "Running HM sim, step "+str(self.step)+" of max "+str(n_steps)\
+                    +". Current u is "+str(self.u)+", max 2m/R is currently "+str(max2mOverR)+".<br />"\
+                    +"Time Elapsed is: "+str(time.process_time() - self.start_time)+" s"
+
 
             self.deltau = deltau
             kxi2, kR2, km2, kU2 = self.k_coeffs(self.R + deltau/2*kR1, self.m + deltau/2*km1,
@@ -320,9 +348,14 @@ class HM:
 
         while(self.step < n_steps) :
 
-            if((self.R**2 * self.m * self.Abar**2 * np.exp(2*(self.alpha-1)*self.xi)).max() > self.mOverR):
+            max2mOverR = (self.R**2 * self.m * self.Abar**2 * np.exp(2*(self.alpha-1)*self.xi)).max()
+            if(max2mOverR > self.mOverR):
                 print('2m/R is larger than ' + str(self.mOverR))
                 return 1
+            if(self.step%20==0) :
+                self.display.value = "Running HM sim, step "+str(self.step)+" of max "+str(n_steps)\
+                    +". Current u is "+str(self.u)+", max 2m/R is currently "+str(max2mOverR)+".<br />"\
+                    +"Time Elapsed is: "+str(time.process_time() - self.start_time)+" s"
 
             if(adj_intv > 0 and self.step % adj_intv == 0):
                 deltau = self.cfl_deltau(self.R, self.m, self.U, self.xi) * 0.05
@@ -398,7 +431,6 @@ class HM:
         U = self.U
 
         mOverR = (R**2 * m * self.Abar**2 * np.exp(2*(self.alpha-1)*xi))
-
 
         return (( (np.exp(-self.xi/2) * self.R **3 * self.Abar**3 * self.m ) / 2 )[mOverR.argmax()])
 

@@ -67,13 +67,14 @@ class QCD_EOS:
         Transition function t
         """
         mu = 2
-        rho[rho<=1.0e-10] = 1.0e-10 # minimum density floor
         return ( 1 + np.tanh( (np.log(rho) - np.log(rho0))/mu ) )/2
 
     def P(self, rho) :
         """
         Return the pressure for a given density rho
         """
+        h = np.heaviside(rho - 1.0e-10, 0.0)
+        rho = rho*h + 1.0e-10*(1-h) # minimum density floor
         if self.use_fixedw :
             return self.fixedw * rho
         else :
@@ -103,6 +104,8 @@ class QCD_EOS:
         Return the pressure derivative wrt. rho, i.e. the equation of
         state parameter w in the constant w case.
         """
+        h = np.heaviside(rho - 1.0e-10, 0.0)
+        rho = rho*h + 1.0e-10*(1-h) # minimum density floor
         if self.use_fixedw :
             return np.ones_like(rho)*self.fixedw
         else :

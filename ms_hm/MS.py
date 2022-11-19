@@ -386,9 +386,9 @@ class MS:
             self.step += 1
             self.xi += deltau
 
-            if(self.step % 10 == 0 and self.trace_ray==False):
+            if(self.trace_ray==False):
                 if(find_exc_pos(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)) > 0):
-                    print("Horizon was found at step", self.step, "! code will be terminated.")
+                    print("Horizon was found at step", self.step, "! MS run will be terminated.")
                     return -1
 
         self.plot_fields(force_plot=True)
@@ -506,9 +506,9 @@ class MS:
 
             self.deltau_adap = deltau
 
-            if(self.step % 10 == 0 and self.trace_ray==False):
+            if(self.trace_ray==False):
                 if(find_exc_pos(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)) > 0):
-                    print("Horizon is found, code will be terminated! Finished at step", self.step)
+                    print("Horizon is found, MS run will be terminated! Finished at step", self.step)
                     return -1
 
         self.plot_fields(force_plot=True)
