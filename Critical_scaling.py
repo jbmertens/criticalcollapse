@@ -1,19 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# # Critical Collapse Study
-# 
-# Below is code to help study the formation of black holes. The equations integrated are described in the work by Bloomfield et. al.
-# 
-# arXiv paper on : [1504.02071](https://arxiv.org/pdf/1504.02071.pdf) ([ar5iv](https://ar5iv.org/abs/1504.02071))
-# 
-# For collapse with an approximate QCD equation of state, a previous work is
-# 
-# arXiv: [1801.06138](https://arxiv.org/pdf/1801.06138.pdf) ([ar5iv](https://ar5iv.org/abs/1801.06138))
-# 
-# ## Import Modules
-
-
 import numpy as np
 import sys
 from importlib import reload 
@@ -33,16 +20,19 @@ mpl.rc('ytick.minor', visible=True)
 
 # importing MS and HM modules. Reload modules if needed
 try :
+    reload(ms_hm)
+    reload(ms_hm.QCD_EOS)
     reload(ms_hm.MS)
     reload(ms_hm.HM)
-    reload(ms_hm.QCD_EOS)
+    reload(ms_hm.timer)
 except :
-    pass
+    print("Did not reload modules, they may not have been imported yet.")
 
 import ms_hm
 from ms_hm.QCD_EOS import *
 from ms_hm.MS import *
 from ms_hm.HM import *
+from ms_hm.timer import *
 
 
 # ## Various functions that use the MS and HM classes
@@ -154,48 +144,93 @@ def find_crit(Abar, rho0, lower_amp, upper_amp,
     return (lower_amp, upper_amp)
 
 
-def find_mass(Abar, rho0, amp, is_searching_for_crit=False, default_steps=1500000):
+def find_mass(Abar, rho0, amp, mOverR_thresh=0.98,
+        is_searching_for_crit=False, ms_steps=1500000,
+        MS_sm_sigma=0.0,
+        hm_steps=1500000, HM_sm_sigma=15.0,
+        HM_Abar=None, # can specify a different Abar for HM run
+        HM_cflfac=0.1
+    ):
     """
     Find mass of BHs for certain amplitude
     set is_searching_for_crit=True when searching for the critical point
     """
     print('Finding mass with amp ' + str(amp))
             
-    # Perform a MS run without raytracing
-    ms = MS(Abar, rho0, amp, trace_ray=False, BH_threshold=-1e1)
-    ms.run_steps(default_steps)
+    # Perform an MS run without raytracing to get the overdensity delta
+    ms = MS(Abar, rho0, amp, trace_ray=False, BH_threshold=-1e1, sm_sigma=MS_sm_sigma)
+    ms.adap_run_steps(ms_steps)
     delta = ms.delta
     
-    # Perform a run *with* raytracing to get ICs for an HM run
-    ms = MS(Abar, rho0, amp, trace_ray=True, BH_threshold=-1e1)
-    flag = ms.run_steps(default_steps)
+    # Perform an MS run with raytracing to get ICs for an HM run
+    ms = MS(Abar, rho0, amp, trace_ray=True, BH_threshold=-1e1, sm_sigma=MS_sm_sigma)
+    flag = ms.adap_run_steps(ms_steps)
     if(flag != 0):
         raise ValueError('Not finishing ray-tracing with the amplitude ' + str(amp))
         
     # Perform an HM run
-    hm = HM(ms, mOverR=0.99, sm_sigma=50)
-    bh_formed = hm.adap_run_steps(550000) == 1
+    hm = HM(ms, mOverR=mOverR_thresh, sm_sigma=HM_sm_sigma, Abar=HM_Abar, cflfac=HM_cflfac)
+    bh_formed = hm.run_steps(hm_steps) == 1
     if(not bh_formed and is_searching_for_crit==False):
-        raise ValueError('Cannot get the target 2m/R with the amplitude ' + str(amp))
+        print('Unable to reach the target 2m/R with the amplitude ' + str(amp))
     
-    print(ms.delta, hm.BH_mass2())
-    return (ms.delta, hm.BH_mass2())
+    return (delta, hm.BH_mass2(), ms, hm)
 
 
-n = 800
-Abar = mix_grid(np.log10(1.5), np.log10(40), n)
-rho0 = float(sys.argv[1]) # initial density value in MeV^4
-fixw = int(sys.argv[2]) # 0 for not fixed, 1 for fixed initially, 2 for fixed at turnaround
-if(fixw == 0) :
-    fixw = False
-    use_turnaround = False
-elif(fixw == 1) :
-    fixw = True
-    use_turnaround = False
-elif(fixw == 2) :
-    fixw = True
-    use_turnaround = True
-else :
-    print("Error running simulation, bad fixw specified.")
-print("Running simulation with rho0 =", rho0, ", fixw =", fixw, ", and use_turnaround = ", use_turnaround)
-find_crit(Abar, rho0, 0.15, 0.3, fixw=fixw,sm_sigma=2.0)
+
+# simulation resolution parameter
+# (Not exactly the number of gridpoints for a mixed grid)
+n_mix = 3200
+n_uni = 3200
+
+# Generate an array of coordinate positions for the simulation to run at
+lower = np.log(5.65) # The coordinates will be linearly spaced from 0 to e^lower
+upper = np.log(21.0) # The coordinates will be log spaced from e^lower to e^upper
+Abar_mix = mix_grid(lower, upper, n_mix)
+Abar_uni = uni_grid(upper, n_uni)
+
+plt.plot(Abar_mix, 'k.')
+plt.plot(Abar_uni, 'b.')
+print("The grid of Abar values is linearly spaced from Abar = 0 to", np.exp(lower),
+      "then log spaced until Abar =", np.exp(upper))
+
+
+
+
+
+
+# rho0 = float(sys.argv[1]) # initial density value in MeV^4
+# fixw = int(sys.argv[2]) # 0 for not fixed, 1 for fixed initially, 2 for fixed at turnaround
+# if(fixw == 0) :
+#     fixw = False
+#     use_turnaround = False
+# elif(fixw == 1) :
+#     fixw = True
+#     use_turnaround = False
+# elif(fixw == 2) :
+#     fixw = True
+#     use_turnaround = True
+# else :
+#     print("Error running simulation, bad fixw specified.")
+
+# print("Running simulation with rho0 =", rho0, ", fixw =", fixw, ", and use_turnaround = ", use_turnaround)
+# find_crit(Abar, rho0, 0.15, 0.3, fixw=fixw,sm_sigma=2.0)
+
+
+
+# find_crit(Abar_mix, 1.0e0, 0.15, 0.3, fixw=False, sm_sigma=0.0)
+delta, mass, ms, hm = find_mass(Abar_mix, 1.0e0, 0.2727, mOverR_thresh=0.994,
+          MS_sm_sigma=0.0, hm_steps=79000, HM_sm_sigma=30.0, HM_Abar=Abar_mix, HM_cflfac=0.1)
+
+
+delta, mass, ms, hm = find_mass(Abar_mix, 1.0e0, 0.2727, mOverR_thresh=0.994,
+          MS_sm_sigma=0.0, hm_steps=150000, HM_sm_sigma=50.0, HM_Abar=Abar_mix, HM_cflfac=0.1)
+
+
+# ms = MS(Abar_mix, 1.0e0, 0.28, trace_ray=True, BH_threshold=-1e1, sm_sigma=0.0)
+# ms.adap_run_steps(500)
+# ms.timer.results()
+
+# hm = HM(ms, mOverR=0.99, sm_sigma=15.0)
+# hm.adap_run_steps(100)
+# hm.timer.results()

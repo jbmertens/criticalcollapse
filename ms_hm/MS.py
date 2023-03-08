@@ -8,6 +8,7 @@ from IPython.display import HTML
 from scipy.ndimage import gaussian_filter1d
 
 from ms_hm.utils import *
+from ms_hm.timer import *
 from ms_hm.QCD_EOS import *
 
 class MS:
@@ -23,6 +24,8 @@ class MS:
                  trace_ray=False, BH_threshold=1, dt_frac=0.025, sm_sigma=0.0,
                  plot_interval=-1, fixw=False, use_turnaround=False,
                  od_size=1.6):
+
+        self.timer = timer()
 
         # Initial coordinate grid & number of grid points
         self.Abar = Abar
@@ -117,30 +120,37 @@ class MS:
         """
         Compute (tilded) pressure as a function of (tilded) density.
         """
+        self.timer.start("P")
         H = np.exp(-self.xi) / self.RH
         rhob = 3 / (8*np.pi) * H**2
         realRho = rho * rhob
         realP = self.qcd.P(realRho)
         P = realP/rhob # P is Ptilde
+        self.timer.stop("P")
         return P
 
     def rho(self, R, m):
+        self.timer.start("rho")
         temp = m + ms_rho_term(R, m, self.Abar)
         if self.sm_sigma > 0 :
             temp = gaussian_filter1d(temp, sigma=self.sm_sigma, mode='nearest')
+        self.timer.stop("rho")
         return temp
 
     def psi(self, rho, p, Pprime):
+        self.timer.start("psi")
         offset = + np.log(rho[-1]**(-3 * self.alpha * self.qcd.dPdrho(rho[-1]) / 2))
         psi = inv_derv_phi(rho, p, offset)
         if (psi>100).any() :
             raise ValueError("Large psi detected at step "+str(self.step)+"!")
+        self.timer.stop("psi")
         return psi
 
     def Pprime(self, R, m):
         """
         Return spatial derivative of the pressure field
         """
+        self.timer.start("Pprime")
         # staggered derivative expression:
         R_stg = self.to_stg(R)
         m_stg = self.to_stg(m)
@@ -149,12 +159,15 @@ class MS:
         P_stg = self.P(rho_stg)
         dPdAbar = np.concatenate( ([0], stg_dfdA(P_stg, self.Abar_stg), [0]) )
 
+        self.timer.stop("Pprime")
         return dPdAbar
 
     def k_coeffs(self, R, m, U, Abar_p, xi) :
         """
         Compute Runge-Kutta "k" coefficients
         """
+        self.timer.start("k_coeffs")
+
         g = self.gamma(R, m, U, xi)
         r = self.rho(R, m)
         p = self.P(r)
@@ -181,6 +194,7 @@ class MS:
 
         kA_p = self.alpha * np.interp(Abar_p, self.Abar, ep * g / AR_prime)
 
+        self.timer.stop("k_coeffs")
         return kR, km, kU, kA_p
 
     def BH_wont_form(self):
@@ -317,12 +331,14 @@ class MS:
             print('Not tracing ray and NO excision will be performed!')
 
         while(self.step < n_steps) :
+            self.timer.start("run_steps")
 
             # Plot things every so often
             self.plot_fields()
 
             # Stop running if it becomes clear a BH won't form
             if (self.BH_wont_form() == True) :
+                self.timer.stop("run_steps")
                 return -2
 
             # when density perturbation enters the cosmic horizon
@@ -362,6 +378,7 @@ class MS:
                 if (diff > 1): # move across more than two grid pints!
                     print('Warning! ' + str(self.Abar_p) + ' ' + str(Abar_p_new))
                     print("Code stopped running on step", self.step)
+                    self.timer.stop("run_steps")
                     return 2
                 if ( diff > 0): # move across one grid point
                     interp_w = (self.Abar[idx_p_new] - self.Abar_p) / (Abar_p_new - self.Abar_p)
@@ -381,6 +398,7 @@ class MS:
 
                 if(idx_p_new == self.N-2): # going out of the boundary
                     print("Photon has gone out of the outter boundary!")
+                    self.timer.stop("run_steps")
                     return 0
 
             self.step += 1
@@ -389,10 +407,17 @@ class MS:
             if(self.trace_ray==False):
                 if(find_exc_pos(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)) > 0):
                     print("Horizon was found at step", self.step, "! MS run will be terminated.")
+                    self.timer.stop("run_steps")
                     return -1
+
+            self.timer.stop("run_steps")
 
         self.plot_fields(force_plot=True)
 
+    def absmax(self, a, axis=None):
+        amax = a.max(axis)
+        amin = a.min(axis)
+        return max(np.abs(amin), amax)
 
     def adap_run_steps(self, n_steps, adjust_steps=100, tol=1e-7) :
 
@@ -405,26 +430,31 @@ class MS:
 
 
         while(self.step < n_steps):
+            self.timer.start("adap_run_steps")
 
             # Plot things every so often
             self.plot_fields()
 
             # Stop running if it becomes clear a BH won't form.
             if(self.BH_wont_form() == True):
+                self.timer.stop("adap_run_steps")
                 return -2
 
             if (deltau < 1e-10):
                 print("Warning, the time step is too small! Stopping run at step "
                     +str(self.step)+" with timestep "+str(deltau))
+                self.timer.stop("adap_run_steps")
                 return 1
 
             exc_arr = self.get_exc_arr()
 
+            self.timer.start("delta_calc")
             if(self.delta == -1):
                 r = self.rho(self.R, self.m)
                 pos = zero_crossing(self.Abar, (self.Abar - 1/np.exp((self.alpha-1) * self.xi) / self.R))
                 if(pos > 0 and np.interp(pos, self.Abar, r) < 1):
                     self.delta = np.interp(pos, self.Abar, self.m) - 1
+            self.timer.stop("delta_calc")
 
 
             kR1, km1, kU1, kA_p1 = self.k_coeffs(self.R, self.m, self.U, self.Abar_p, self.xi)
@@ -448,13 +478,18 @@ class MS:
 
             kR4, km4, kU4, kA_p4 = self.k_coeffs(R_new , m_new , U_new, Abar_p_new, self.xi + deltau)
 
-            E_R = np.max( np.abs((deltau * (-5*kR1/72 + kR2/12 + kR3/9 - kR4/8))) * exc_arr)
-            E_m = np.max( np.abs(deltau * (-5*km1/72 + km2/12 + km3/9 - km4/8)) * exc_arr)
-            E_U = np.max( np.abs(deltau * (-5*kU1/72 + kU2/12 + kU3/9 - kU4/8)) * exc_arr)
+            self.timer.start("rk_math")
 
-            max_err_R = np.max(np.abs(self.R) * exc_arr) * tol
-            max_err_m = np.max(np.abs(self.m) * exc_arr) * tol
-            max_err_U = np.max(np.abs(self.U) * exc_arr) * tol
+            e = self.exc_pos
+            E_R = deltau*self.absmax( -5*kR1[:e]/72 + kR2[:e]/12 + kR3[:e]/9 - kR4[:e]/8 )
+            E_m = deltau*self.absmax( -5*km1[:e]/72 + km2[:e]/12 + km3[:e]/9 - km4[:e]/8 )
+            E_U = deltau*self.absmax( -5*kU1[:e]/72 + kU2[:e]/12 + kU3[:e]/9 - kU4[:e]/8 )
+
+            max_err_R = self.absmax(self.R[:e]) * tol
+            max_err_m = self.absmax(self.m[:e]) * tol
+            max_err_U = self.absmax(self.U[:e]) * tol
+
+            self.timer.stop("rk_math")
 
             if(diff <= 1 and E_R < max_err_R and E_m < max_err_m and E_U < max_err_U):
                 self.R = self.R + deltau/9*(2*kR1 + 3*kR2 + 4*kR3 ) * exc_arr
@@ -462,6 +497,7 @@ class MS:
                 self.U = self.U + deltau/9*(2*kU1 + 3*kU2 + 4*kU3 ) * exc_arr
 
                 if(self.trace_ray == True):
+                    self.timer.start("raytrace")
 
                     U_p_new = np.interp(Abar_p_new, self.Abar, self.U)
                     m_p_new = np.interp(Abar_p_new, self.Abar, self.m)
@@ -483,6 +519,8 @@ class MS:
                     self.R_p = R_p_new
                     self.rho_p = rho_p_new
 
+                    self.timer.stop("raytrace")
+
                 kR1 = kR4.copy()
                 km1 = km4.copy()
                 kU1 = kU4.copy()
@@ -492,6 +530,7 @@ class MS:
                 self.xi += deltau
                 if(idx_p_new == self.N-2): #going out of the boundary
                     print("Photon has gone out of the outter boundary at step", self.step)
+                    self.timer.stop("adap_run_steps")
                     return 0
 
             if( diff <= 1 ):
@@ -499,7 +538,6 @@ class MS:
                 self.q = 0.75*np.min((max_err_R/E_R, max_err_m/E_m, max_err_U/E_U) )**(1/3)   # conservative optimal step factor
                 self.q = min(self.q, 5)               # limit stepsize growth
                 deltau *= self.q
-
             else:
                 # reducing the deltau since diff is too large
                 deltau /= 2.0
@@ -509,9 +547,13 @@ class MS:
             if(self.trace_ray==False):
                 if(find_exc_pos(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)) > 0):
                     print("Horizon is found, MS run will be terminated! Finished at step", self.step)
+                    self.timer.stop("adap_run_steps")
                     return -1
 
+            self.timer.stop("adap_run_steps")
+
         self.plot_fields(force_plot=True)
+
 
 
     def cfl_deltau(self, R, m, U):
@@ -527,8 +569,10 @@ class MS:
         ep = np.exp(self.psi(r, p, Pprime))
         el =  (dfdA(a * self.A * R, self.Abar, 1) / self.RH) /(a * H * self.RH * g)
 
-        return (np.log(1 + el / ep / np.exp(self.xi)
+        result = (np.log(1 + el / ep / np.exp(self.xi)
                        * self.alpha * np.concatenate( ([1e10],(self.Abar[1:] - self.Abar[0:-1])) ) / np.sqrt(self.w0))).min()
+
+        return result
 
     # def movie(self):
 

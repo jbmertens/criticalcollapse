@@ -4,8 +4,12 @@ import scipy
 import matplotlib.pyplot as plt
 from scipy import signal
 from scipy.ndimage import gaussian_filter1d
+from scipy.interpolate import interp1d
+from scipy.optimize import minimize_scalar
+from scipy import stats
 
 from ms_hm.utils import *
+from ms_hm.timer import *
 
 from ipywidgets import HTML
 from IPython.display import display
@@ -24,6 +28,8 @@ class HM:
 
     def __init__(self, MS, mOverR=0.999, sm_sigma=5,
         Abar=None, cflfac=0.2):
+
+        self.timer = timer()
         
         # Try to work in case raytracing didn't finish
         R = MS.R_hm
@@ -84,6 +90,9 @@ class HM:
         self.display = HTML(value="Running HM simulation.")
         display(self.display)
 
+        self.mass_data = np.array([])
+        self.max2moR_data = np.array([])
+
         return
 
     # convert to half grid
@@ -103,11 +112,13 @@ class HM:
         """
         Compute (tilded) pressure as a function of (tilded) density.
         """
+        self.timer.start("P")
         H = np.exp(-self.xi) / self.RH
         rhob = 3 / (8*np.pi) * H**2
         realRho = rho * rhob
         realP = self.qcd.P(realRho)
         P = realP/rhob
+        self.timer.stop("P")
         return P
     
     # return the L2 error in rho
@@ -130,6 +141,7 @@ class HM:
         return temp
     
     def rho(self, R, m, U, xi, g, xiprime, Rprime, mprime):
+        self.timer.start("rho")
 
         H = np.exp(-self.xi) / self.RH
         rhob = 3 / (8*np.pi) * H**2
@@ -160,6 +172,7 @@ class HM:
             # plt.plot(self.rho_p)
             # raise ValueError('Rho is negative.')
 
+        self.timer.stop("rho")
         return self.rho_p
 
     def rho_stg(self, R, m, U, xi, g, xiprime, Rprime, mprime):
@@ -218,6 +231,7 @@ class HM:
         self.Q_old = p / r
         
     def k_coeffs(self, R, m, U, xi) :
+        self.timer.start("k_coeffs")
 
         xiprime = WENO_dfdA(xi, self.Abar, 1e100)
         Rprime = WENO_dfdA(R, self.Abar, 1e100)
@@ -265,9 +279,45 @@ class HM:
         km[0] = epsi[0] / elambda[0] * (m[1] - m[0]) / ( (self.Abar[1] - self.Abar[0]) )
         kU[0] = epsi[0] / elambda[0] * (U[1] - U[0]) / ( (self.Abar[1] - self.Abar[0]) )
 
+        self.timer.stop("k_coeffs")
         return kxi, kR, km, kU
 
-    def adap_run_steps(self,n_steps, adj_intv=-1, tol=1e-7) :
+    def check_progress(self, n_steps) :
+        
+        mass, max2moR = self.BH_mass2()
+        self.mass_data = np.append(self.mass_data, mass)
+        self.max2moR_data = np.append(self.max2moR_data, max2moR)
+
+        if(max2moR > self.mOverR):
+            print('2m/R is larger than ' + str(self.mOverR))
+            return 1
+
+        if(self.step%20==0) :
+            self.display.value = "Running HM sim, step "+str(self.step)+" of max "+str(n_steps)\
+                +". Current u is "+str(self.u)+", max 2m/R is currently "+str(max2moR)+".<br />"\
+                +"Time Elapsed is: "+str(time.process_time() - self.start_time)+" s"
+
+        if(self.step%1000==0) :
+            print("u:", self.u, "time:", time.process_time() - self.start_time,
+                "step:", self.step, "max2moR:", max2moR, "mass:", mass)
+
+        return 0
+
+    def extrap_mass(self, start=-25, len=15, incr=500) :
+        mextraps = []
+
+        for s in range(start, -len-1) :
+            e=s+len
+            x = self.max2moR_data[s*incr:e*incr:incr]
+            y = self.mass_data[s*incr:e*incr:incr]
+            fit = stats.linregress(x, y)
+            mextrap = fit.slope*1 + fit.intercept
+            mextraps.append(mextrap)
+
+        self.mextraps = mextraps
+        return mextraps[-1], np.mean(mextraps), np.std(mextraps)
+
+    def adap_run_steps(self, n_steps, adj_intv=-1, tol=1e-7) :
 
         deltau = self.deltau_adap
         self.deltau = deltau
@@ -276,22 +326,16 @@ class HM:
         kxi1, kR1, km1, kU1 = self.k_coeffs(self.R, self.m, self.U,  self.xi)
 
         while(self.step < n_steps) :
+            self.timer.start("adap_run_steps")
+
             # if(self.step % 200 == 0) : 
                 #plt.plot(np.sqrt(np.exp(2 * (1 - self.alpha) * self.xi)))
                 # plt.semilogy(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi))
             if (deltau < 1e-10):
                 print("Warning, the time step is too small!")
                 break
-
-            max2mOverR = (self.R**2 * self.m * self.Abar**2 * np.exp(2*(self.alpha-1)*self.xi)).max()
-            if(max2mOverR > self.mOverR):
-                print('2m/R is larger than ' + str(self.mOverR))
-                return 1
-            if(self.step%20==0) :
-                self.display.value = "Running HM sim, step "+str(self.step)+" of max "+str(n_steps)\
-                    +". Current u is "+str(self.u)+", max 2m/R is currently "+str(max2mOverR)+".<br />"\
-                    +"Time Elapsed is: "+str(time.process_time() - self.start_time)+" s"
-
+            if self.check_progress(n_steps) > 0 :
+                break
 
             self.deltau = deltau
             kxi2, kR2, km2, kU2 = self.k_coeffs(self.R + deltau/2*kR1, self.m + deltau/2*km1,
@@ -339,6 +383,8 @@ class HM:
             deltau *= self.q
             self.deltau_adap = deltau
 
+            self.timer.stop("adap_run_steps")
+
 
     def run_steps(self, n_steps, adj_intv=-1) :
 
@@ -347,15 +393,10 @@ class HM:
         self.set_Q_old(self.R, self.m, self.U, self.xi)
 
         while(self.step < n_steps) :
+            self.timer.start("run_steps")
 
-            max2mOverR = (self.R**2 * self.m * self.Abar**2 * np.exp(2*(self.alpha-1)*self.xi)).max()
-            if(max2mOverR > self.mOverR):
-                print('2m/R is larger than ' + str(self.mOverR))
-                return 1
-            if(self.step%20==0) :
-                self.display.value = "Running HM sim, step "+str(self.step)+" of max "+str(n_steps)\
-                    +". Current u is "+str(self.u)+", max 2m/R is currently "+str(max2mOverR)+".<br />"\
-                    +"Time Elapsed is: "+str(time.process_time() - self.start_time)+" s"
+            if self.check_progress(n_steps) > 0 :
+                break
 
             if(adj_intv > 0 and self.step % adj_intv == 0):
                 deltau = self.cfl_deltau(self.R, self.m, self.U, self.xi) * 0.05
@@ -390,6 +431,8 @@ class HM:
             self.set_Q_old(self.R, self.m, self.U, self.xi)
             self.step += 1
             self.u += deltau
+
+            self.timer.stop("run_steps")
 
     def BH_mass(self):
         xi = self.xi
@@ -431,8 +474,16 @@ class HM:
         U = self.U
 
         mOverR = (R**2 * m * self.Abar**2 * np.exp(2*(self.alpha-1)*xi))
+        xs = np.arange(len(mOverR))
+        xnearmax = max(2, min( mOverR.argmax(), len(mOverR)-2 ))
+        fn_mOverR = interp1d(xs, -1*mOverR, kind='cubic')
+        xatmax = minimize_scalar(fn_mOverR, bounds=(xnearmax-1, xnearmax+1), method='bounded')
+        xatmax = xatmax.x
 
-        return (( (np.exp(-self.xi/2) * self.R **3 * self.Abar**3 * self.m ) / 2 )[mOverR.argmax()])
+        mass_expr = (np.exp(-self.xi/2) * self.R **3 * self.Abar**3 * self.m ) / 2
+        fn_mass_expr = interp1d(xs, mass_expr, kind='cubic')
+
+        return fn_mass_expr(xatmax), -1.0*fn_mOverR(xatmax)
 
 
     def cfl_deltau(self, R, m, U, xi):
