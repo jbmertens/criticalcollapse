@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from IPython.display import HTML
 from scipy.ndimage import gaussian_filter1d
+from scipy.interpolate import InterpolatedUnivariateSpline
+from scipy.optimize import minimize
 
 from ms_hm.utils import *
 from ms_hm.timer import *
@@ -23,7 +25,7 @@ class MS:
     def __init__(self, Abar, rho0, amp,
                  trace_ray=False, BH_threshold=1, dt_frac=0.025, sm_sigma=0.0,
                  plot_interval=-1, fixw=False, use_turnaround=False,
-                 od_size=1.6):
+                 od_size=1.6, BH_term=True, kappa=2.0):
 
         self.timer = timer()
 
@@ -62,8 +64,11 @@ class MS:
         self.movie_frames = []
 
         # Stability & integration parameters and such
+        self.kappa = kappa
         self.exc_pos = -1
         self.sm_sigma = sm_sigma # smooth the density field if needed
+        r = self.rho(self.R, self.m) # rho for photon tracing
+        self.rho_prev = r
         self.xi = 0
         self.q = 1
         self.dt_frac = dt_frac
@@ -71,10 +76,8 @@ class MS:
         self.deltau_adap = self.deltau_i
 
         # Data to supply to a hernandez-misner run
-        # initialize the poton
+        # initialize the photon
         self.trace_ray = trace_ray
-
-        r = self.rho(self.R, self.m) # rho for photon tracing
 
         self.Abar_p = self.Abar[0]
         self.U_p = self.U[0]
@@ -99,24 +102,56 @@ class MS:
         self.field_max = 0
         self.delta = -1
 
+        self.m2oR = None
+        self.m2oR_prev = None
+        self.exc_pos = -1
+        self.BH_term=BH_term
+
 
     # convert to half grid
-    def to_stg(self,arr):
+    def to_stg(self,arr) :
         return (arr[0:-1] + arr[1:]) / 2
 
-    def to_cubic_stg(self,arr):
+    def to_cubic_stg(self, arr) :
         a1 = arr[0:-1] ** 3
         a2 = arr[1:] ** 3
         return (a1 + a2) / (np.abs(a1 + a2)) * ( np.abs(a1 + a2)/ 2) **(1/3)
 
-    def to_idx(self, pos):
+    def to_idx(self, pos) :
         return np.searchsorted(self.Abar, pos, "right") - 1
 
     def gamma(self, R, m, U, xi):
         return np.sqrt( np.exp(2 * (1 - self.alpha) * xi)
                        + (self.Abar * R)**2 * (U**2 - m) )
 
-    def P(self, rho) :
+    def Qvisc(self, R_in, U_in, rho, stg=False) :
+
+        if stg :
+            R = self.to_stg(R_in)
+            U = self.to_stg(U_in)
+            rho_p = self.to_stg(self.rho_prev)
+            Abar = self.Abar_stg
+        else :
+            R = R_in
+            U = U_in
+            rho_p = self.rho_prev
+            Abar = self.Abar
+
+        dR2U = dfdA(R*R*U, Abar)
+        dARU = WENO_dfdA(Abar*R*U, Abar)
+        dAR = dfdA(Abar*R, Abar)
+        dU = dfdA(U, Abar)
+
+        delta_Abar = np.concatenate( ([0], Abar[1:]-Abar[:-1]) )
+        # self.trigger = 1*(dAR*U < -Abar*R*dU/3)
+        # self.trigger = 1*(dR2U < 0)
+        self.trigger = 1*(rho < rho_p)
+        self.Q = self.trigger * self.kappa * (delta_Abar)**2 \
+             * np.exp( (self.alpha-1)*self.xi )* (dARU)**2
+
+        return self.Q
+
+    def P(self, rho, R, U, stg=False) :
         """
         Compute (tilded) pressure as a function of (tilded) density.
         """
@@ -127,7 +162,8 @@ class MS:
         realP = self.qcd.P(realRho)
         P = realP/rhob # P is Ptilde
         self.timer.stop("P")
-        return P
+        Qvisc = self.Qvisc(R, U, rho, stg=stg)
+        return P + rho*Qvisc
 
     def rho(self, R, m):
         self.timer.start("rho")
@@ -146,7 +182,7 @@ class MS:
         self.timer.stop("psi")
         return psi
 
-    def Pprime(self, R, m):
+    def Pprime(self, R, m, U):
         """
         Return spatial derivative of the pressure field
         """
@@ -156,7 +192,7 @@ class MS:
         m_stg = self.to_stg(m)
         rho_stg = m_stg + ms_rho_term_stg(R, m, self.Abar, R_stg, self.Abar_stg)
 
-        P_stg = self.P(rho_stg)
+        P_stg = self.P(rho_stg, R, U, stg=True)
         dPdAbar = np.concatenate( ([0], stg_dfdA(P_stg, self.Abar_stg), [0]) )
 
         self.timer.stop("Pprime")
@@ -170,15 +206,15 @@ class MS:
 
         g = self.gamma(R, m, U, xi)
         r = self.rho(R, m)
-        p = self.P(r)
+        p = self.P(r, R, U)
 
-        Pprime = self.Pprime(R, m)
+        Pprime = self.Pprime(R, m, U)
         ep = np.exp(self.psi(r, p, Pprime))
 
         kR = self.alpha * R * (U * ep - 1)
         km = 2 * m - 3 * self.alpha * U * ep * (p + m)
 
-        AR_prime = R + self.Abar * dfdA(R, self.Abar, 0, self.exc_pos)
+        AR_prime = R + self.Abar * WENO_dfdA(R, self.Abar, 0)
 
         H = np.exp(-self.xi) / self.RH
         rhob = 3 / (8*np.pi) * H**2
@@ -246,13 +282,13 @@ class MS:
 
             #Fifth figure shows Pprime
             plt.figure(5)
-            Pprime = self.Pprime(self.R, self.m)
+            Pprime = self.Pprime(self.R, self.m, self.U)
             plt.plot(Pprime)
             plt.title("Pprime")
 
             #Sixth figure shows P
             plt.figure(6)
-            p = self.P(self.rho(self.R, self.m))
+            p = self.P(self.rho(self.R, self.m), self.R, self.U)
             plt.semilogy(p)
             plt.title("P")
 
@@ -270,8 +306,8 @@ class MS:
 
             g = self.gamma(self.R, self.m, self.U, self.xi)
             r = self.rho(self.R, self.m)
-            p = self.P(r)
-            Pprime = self.Pprime(self.R, self.m)
+            p = self.P(r, self.R, self.U)
+            Pprime = self.Pprime(self.R, self.m, self.U)
 
             two_m_over_R = self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)
 
@@ -317,7 +353,7 @@ class MS:
             # self.exc_pos = np.max([self.exc_pos, horizon_pos-1])
             self.exc_pos = np.max([self.exc_pos, horizon_pos, self.to_idx(self.Abar_p) - 10])
         
-        return np.concatenate(( [0]*(self.exc_pos + 1), [1]*(self.N - self.exc_pos - 1) ))
+        return self.exc_pos, np.concatenate(( [0]*(self.exc_pos + 1), [1]*(self.N - self.exc_pos - 1) ))
 
 
     def run_steps(self, n_steps) :
@@ -348,7 +384,7 @@ class MS:
                 if(pos > 0 and np.interp(pos, self.Abar, r) < 1):
                     self.delta = np.interp(pos, self.Abar, self.m) - 1
 
-            exc_arr = self.get_exc_arr()
+            e, exc_arr = self.get_exc_arr()
 
             kR1, km1, kU1, kA_p1 = self.k_coeffs(self.R, self.m, self.U, self.Abar_p, self.xi)
             kR2, km2, kU2, kA_p2 = self.k_coeffs(self.R + deltau/2*kR1, self.m + deltau/2*km1,
@@ -364,6 +400,8 @@ class MS:
             self.R = self.R + (deltau/6*(kR1 + 2*kR2 + 2*kR3 + kR4)) * exc_arr
             self.m = self.m + (deltau/6*(km1 + 2*km2 + 2*km3 + km4)) * exc_arr
             self.U = self.U + (deltau/6*(kU1 + 2*kU2 + 2*kU3 + kU4)) * exc_arr
+
+            self.rho_prev = self.rho(self.R, self.m)
 
             if(self.trace_ray == True):
                 Abar_p_new = self.Abar_p + deltau/6*(kA_p1 + 2*kA_p2 + 2*kA_p3 + kA_p4)
@@ -405,7 +443,10 @@ class MS:
             self.xi += deltau
 
             if(self.trace_ray==False):
-                if(find_exc_pos(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)) > 0):
+                self.m2oR_prev = self.m2oR
+                self.m2oR = self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)
+                self.exc_pos = find_exc_pos(self.m2oR)
+                if(self.exc_pos > 0 and self.BH_term == True):
                     print("Horizon was found at step", self.step, "! MS run will be terminated.")
                     self.timer.stop("run_steps")
                     return -1
@@ -413,6 +454,7 @@ class MS:
             self.timer.stop("run_steps")
 
         self.plot_fields(force_plot=True)
+
 
     def absmax(self, a, axis=None):
         amax = a.max(axis)
@@ -446,8 +488,6 @@ class MS:
                 self.timer.stop("adap_run_steps")
                 return 1
 
-            exc_arr = self.get_exc_arr()
-
             self.timer.start("delta_calc")
             if(self.delta == -1):
                 r = self.rho(self.R, self.m)
@@ -456,6 +496,7 @@ class MS:
                     self.delta = np.interp(pos, self.Abar, self.m) - 1
             self.timer.stop("delta_calc")
 
+            self.timer.start("rk_math")
 
             kR1, km1, kU1, kA_p1 = self.k_coeffs(self.R, self.m, self.U, self.Abar_p, self.xi)
             kR2, km2, kU2, kA_p2 = self.k_coeffs(self.R + deltau/2*kR1, self.m + deltau/2*km1,
@@ -478,9 +519,7 @@ class MS:
 
             kR4, km4, kU4, kA_p4 = self.k_coeffs(R_new , m_new , U_new, Abar_p_new, self.xi + deltau)
 
-            self.timer.start("rk_math")
-
-            e = self.exc_pos
+            e, exc_arr = self.get_exc_arr()
             E_R = deltau*self.absmax( -5*kR1[:e]/72 + kR2[:e]/12 + kR3[:e]/9 - kR4[:e]/8 )
             E_m = deltau*self.absmax( -5*km1[:e]/72 + km2[:e]/12 + km3[:e]/9 - km4[:e]/8 )
             E_U = deltau*self.absmax( -5*kU1[:e]/72 + kU2[:e]/12 + kU3[:e]/9 - kU4[:e]/8 )
@@ -490,6 +529,8 @@ class MS:
             max_err_U = self.absmax(self.U[:e]) * tol
 
             self.timer.stop("rk_math")
+
+            self.rho_prev = self.rho(self.R, self.m)
 
             if(diff <= 1 and E_R < max_err_R and E_m < max_err_m and E_U < max_err_U):
                 self.R = self.R + deltau/9*(2*kR1 + 3*kR2 + 4*kR3 ) * exc_arr
@@ -545,7 +586,10 @@ class MS:
             self.deltau_adap = deltau
 
             if(self.trace_ray==False):
-                if(find_exc_pos(self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)) > 0):
+                self.m2oR_prev = self.m2oR
+                self.m2oR = self.R**2 * self.m * self.Abar**2 * np.exp(2 * (self.alpha-1) * self.xi)
+                self.exc_pos = find_exc_pos(self.m2oR)
+                if(self.exc_pos > 0 and self.BH_term == True):
                     print("Horizon is found, MS run will be terminated! Finished at step", self.step)
                     self.timer.stop("adap_run_steps")
                     return -1
@@ -554,20 +598,18 @@ class MS:
 
         self.plot_fields(force_plot=True)
 
-
-
     def cfl_deltau(self, R, m, U):
         a = np.exp(self.alpha * self.xi)
         H = np.exp(-self.xi) / self.RH
 
         g = self.gamma(R, m, U, self.xi)
         r = self.rho(R, m)
-        p = self.P(r)
+        p = self.P(r, R, U)
 
-        Pprime = self.Pprime(R, m)
+        Pprime = self.Pprime(R, m, U)
 
         ep = np.exp(self.psi(r, p, Pprime))
-        el =  (dfdA(a * self.A * R, self.Abar, 1) / self.RH) /(a * H * self.RH * g)
+        el =  (WENO_dfdA(a * self.A * R, self.Abar, 1) / self.RH) /(a * H * self.RH * g)
 
         result = (np.log(1 + el / ep / np.exp(self.xi)
                        * self.alpha * np.concatenate( ([1e10],(self.Abar[1:] - self.Abar[0:-1])) ) / np.sqrt(self.w0))).min()
@@ -582,3 +624,35 @@ class MS:
     #     anim = animation.ArtistAnimation(fig, self.movie_frames,
     #         interval=100, repeat=False)
     #     HTML(anim.to_jshtml())
+
+# 
+
+def ms_mass(ms) :
+    
+    # m2oR max from current step (e.g. before horizon forms)
+    pos, m2oR = min_near(ms.m2oR, ms.exc_pos)
+    # m2oR max from next step (e.g. after horizon forms)
+    pos_p, m2oR_p = min_near(ms.m2oR_prev, ms.exc_pos)
+    # max position when horizon forms (appx., linear interp.)
+    exc_pos = pos + (pos_p-pos)/(m2oR_p-m2oR)*(1-m2oR)
+
+    R = interp_at(ms.R, exc_pos)
+    Abar = interp_at(ms.Abar, exc_pos)
+    m = interp_at(ms.m, exc_pos)
+    
+    print("[pos, pos_p, exc_pos, ms.exc_pos, m2oR, m2oR_p, R, Abar, m]")
+    print([pos, pos_p, exc_pos, ms.exc_pos, m2oR, m2oR_p, R, Abar, m])
+    return np.exp(-ms.xi/2) * R **3 * Abar**3 * m / 2
+
+
+def interp_at(data, idx) :
+    xs = np.arange(len(data))
+    spl = InterpolatedUnivariateSpline(xs, data)
+    return spl(idx)
+
+def min_near(data, pos) :
+    xs = np.arange(len(data))
+    spl = InterpolatedUnivariateSpline(xs, -1.0*data)
+    spl_min = minimize(spl, pos).x[0]
+    
+    return spl_min, -1.0*spl(spl_min)

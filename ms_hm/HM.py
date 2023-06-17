@@ -95,6 +95,23 @@ class HM:
 
         return
 
+    def dfdA0(self, field) :
+        """
+        First derivative of a field at the origin
+        """
+        A = self.Abar
+
+        # Second-order expression
+        # return 1/(A[2]-A[1]) * (
+        #         A[1]/A[2]*(field[2]-field[0]) - A[2]/A[1]*(field[1]-field[0])
+        #     )
+
+        # first-order expression
+        return np.amin([
+            (field[1]-field[0])/(A[1]-A[0])
+            # , (field[2]-field[0])/(A[2]-A[0])
+        ])
+
     # convert to half grid
     def to_stg(self,arr):
         return (arr[0:-1] + arr[1:]) / 2
@@ -198,9 +215,15 @@ class HM:
         return temp
 
     def ephi(self, R, U, g, xi, xiprime, Rprime):
+        """
+        Return e^(phi), as described in Eq. 165c
+        """
         return ephi_term(R, U, self.Abar, xi, g, self.alpha)
 
-    def elambda(self, ephi, exi, xiprime):
+    def elambda2(self, ephi, exi, xiprime):
+        """
+        Return e^(lambda/2), as described in Eq. 165d
+        """
         return self.alpha * ephi * exi * xiprime
 
     def epsi(self, R, U, g, xi, rho, ephi, Q):
@@ -248,15 +271,16 @@ class HM:
         p = self.P(r)
         Q = p / r
         Q_du = (Q - self.Q_old) / self.deltau
-        Qprime = dfdA(Q, self.Abar, 1e100)
+        Qprime = WENO_dfdA(Q, self.Abar, 1e100)
+
         exi = np.exp(xi)
         ephi = self.ephi(R, U, g, xi, xiprime, Rprime)
-        elambda = self.elambda(ephi, exi, xiprime)
+        elambda2 = self.elambda2(ephi, exi, xiprime)
         epsi = self.epsi(R, U, g, xi, r, ephi, p / r)
 
         # drho = self.drho(R, m, U, g, xi, Rprime, mprime, xiprime)
-        drho  = dfdA(r, self.Abar, 1e100)
-        drho[0] = 3 * elambda[0] / exi[0] * ((1 + self.w0) * r[0] / ephi[0] - (r[0] + p[0]) * U[0])
+        drho = dfdA(r, self.Abar, 1e100)
+        drho[0] = 3 * elambda2[0] / exi[0] * ((1 + self.w0) * r[0] / ephi[0] - (r[0] + p[0]) * U[0])
         drho[-1] = 0
 
         kxi = epsi / ephi / np.exp(xi) / self.alpha
@@ -267,17 +291,21 @@ class HM:
 
         kU = - epsi / exi / (1 - Q) * (
             (m + 3 * p) / 2 + U**2 - U / self.alpha / ephi
-            + (Q) * exi / elambda * Uprime + g * (Q) / ( np.concatenate( ([1], self.Abar[1:]) ) \
-                                                                                * R * (1 + Q)) * (
-                3 * (1 + Q) * U + exi * (Qprime / elambda - Q_du / epsi) / (Q)
-            - 3 * (1 + self.w0) * (1 / ephi) + exi / elambda * drho / r)
+            + (Q) * exi / elambda2 * Uprime \
+            + g * Q/(1+Q) / ( np.concatenate( ([1], self.Abar[1:]) )*R ) * (
+                3*(1 + Q)*U
+                + exi*(Qprime / elambda2 - Q_du / epsi)/Q
+                - 3*(1 + self.w0)*(1/ephi)
+                + exi/elambda2*drho/r
+            )
         )
 
         # boundary conditions
-        kxi[0] = epsi[0] / elambda[0] * (xi[1] - xi[0]) / ( (self.Abar[1] - self.Abar[0]) )
-        kR[0] = epsi[0] / elambda[0] * (R[1] - R[0]) / ( (self.Abar[1] - self.Abar[0]) )
-        km[0] = epsi[0] / elambda[0] * (m[1] - m[0]) / ( (self.Abar[1] - self.Abar[0]) )
-        kU[0] = epsi[0] / elambda[0] * (U[1] - U[0]) / ( (self.Abar[1] - self.Abar[0]) )
+        # As described by Eq. 167
+        kxi[0] = epsi[0] / elambda2[0] * self.dfdA0(xi)
+        kR[0] = epsi[0] / elambda2[0] * self.dfdA0(R)
+        km[0] = epsi[0] / elambda2[0] * self.dfdA0(m)
+        kU[0] = epsi[0] / elambda2[0] * self.dfdA0(U)
 
         self.timer.stop("k_coeffs")
         return kxi, kR, km, kU
@@ -454,7 +482,7 @@ class HM:
         r = self.rho(R, m, U, xi, g, xiprime, Rprime, mprime)
         exi = np.exp(xi)
         ephi = self.ephi(R, U, g, xi, xiprime, Rprime)
-        elambda = self.elambda(ephi, exi, xiprime)
+        elambda2 = self.elambda2(ephi, exi, xiprime)
         epsi = self.epsi(R, U, g, xi, r, ephi)
         for pos in range(self.N):
             if epsi[pos] > 1e-6:
@@ -496,6 +524,6 @@ class HM:
         #p = self.P(r)
         exi = np.exp(xi)
         ephi = self.ephi(R, U, g, xi, xiprime, Rprime)
-        elambda = self.elambda(ephi, exi, xiprime)
+        elambda2 = self.elambda2(ephi, exi, xiprime)
         epsi = self.epsi(R, U, g, xi, r, ephi, self.w0)
-        return ((1 / np.sqrt(self.w0) - 1)  * (self.Abar[1] - self.Abar[0]) * elambda / epsi).min()
+        return ((1 / np.sqrt(self.w0) - 1)  * (self.Abar[1] - self.Abar[0]) * elambda2 / epsi).min()

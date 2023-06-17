@@ -192,7 +192,7 @@ cpdef ms_rho_term_stg(np.ndarray R_in, double [:] m, double [:] A,
     cdef double [:] res =  np.zeros(size-1, dtype=np.double)
     cdef double [:] R = R_in
     cdef int i
-    for i in prange(0, size - 1,nogil=True):
+    for i in prange(0, size-1, nogil=True):
         res[i] = A_stg[i] * R_stg[i] * (m[i+1] - m[i]) \
                 / (3 * (A[i+1] * R[i+1] - A[i] * R[i]))
     return np.asarray(res)
@@ -232,6 +232,8 @@ cpdef rho_term_stg(np.ndarray R_in, double [:] m, double [:] A, double [:] xi,
 @cython.boundscheck(False)  # Deactivate bounds checking
 cpdef ephi_term(np.ndarray R_in, double [:] U, double [:] A, double [:] xi, double [:] g,
                double a):
+    # Return e^(phi), as described in Eq. 165c
+    # of https://arxiv.org/pdf/1504.02071.pdf
     cdef int size = R_in.shape[0]
     cdef double [:] res =  np.zeros(size, dtype=np.double)
     cdef double [:] R = R_in
