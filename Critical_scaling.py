@@ -223,8 +223,8 @@ delta, mass, ms, hm = find_mass(Abar_mix, 1.0e0, 0.2727, mOverR_thresh=0.994,
           MS_sm_sigma=0.0, hm_steps=79000, HM_sm_sigma=30.0, HM_Abar=Abar_mix, HM_cflfac=0.1)
 
 
-delta, mass, ms, hm = find_mass(Abar_mix, 1.0e0, 0.2727, mOverR_thresh=0.994,
-          MS_sm_sigma=0.0, hm_steps=150000, HM_sm_sigma=50.0, HM_Abar=Abar_mix, HM_cflfac=0.1)
+# delta, mass, ms, hm = find_mass(Abar_mix, 1.0e0, 0.2727, mOverR_thresh=0.994,
+#           MS_sm_sigma=0.0, hm_steps=150000, HM_sm_sigma=50.0, HM_Abar=Abar_mix, HM_cflfac=0.1)
 
 
 # ms = MS(Abar_mix, 1.0e0, 0.28, trace_ray=True, BH_threshold=-1e1, sm_sigma=0.0)

@@ -7,7 +7,7 @@
 
 typedef float real_t;
 
-#define N 400
+#define N 1600
 #define L 5.0
 
 #define PI 3.14159265358979323846264338328
@@ -194,13 +194,16 @@ void k_calc(real_t *Rtilde, real_t *kR_p, real_t *kR_f,
         real_t ep = std::exp(aux.phi[i]);
         real_t AR_prime = R + Abar[i]*aux.dRtildedA[i];
 
+        real_t dPdAoA = 0;
         if(i > 0)
-            dPdAoA0 = aux.dPdA[i] / Abar[i];
+            real_t dPdAoA = dPdAoA0;
+        else
+            real_t dPdAoA = aux.dPdA[i] / Abar[i];
 
         kR_f[i] = ALPHA*R*(U*ep - 1);
         km_f[i] = 2*m - 3*ALPHA*U*ep*(aux.P[i] + m);
         kU_f[i] = U - ALPHA*ep*(
-            aux.gamma[i]*aux.gamma[i]*dPdAoA0 / (R*AR_prime*(aux.rho[i] + aux.P[i]))
+            aux.gamma[i]*aux.gamma[i]*dPdAoA / (R*AR_prime*(aux.rho[i] + aux.P[i]))
             + (2*U*U + m + 3*aux.P[i])/2
         );
     }
@@ -242,7 +245,7 @@ int main(int argc, char **argv)
     output.open("output.dat", std::ios::out | std::ios::trunc);
     int s=0;
     real_t deltaxi = 0.02;
-    for(s=0; s<100000; s++)
+    for(s=0; s<1000000; s++)
     {
         // Run upkeep
 
