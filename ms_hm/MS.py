@@ -175,7 +175,7 @@ class MS:
 
     def psi(self, rho, p, Pprime):
         self.timer.start("psi")
-        offset = + np.log(rho[-1]**(-3 * self.alpha * self.qcd.dPdrho(rho[-1]) / 2))
+        offset = -1.5*self.alpha*self.qcd.dPdrho(rho[-1])*np.log(rho[-1])
         psi = inv_derv_phi(rho, p, offset)
         if (psi>100).any() :
             raise ValueError("Large psi detected at step "+str(self.step)+"!")

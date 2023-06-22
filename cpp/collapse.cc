@@ -4,25 +4,26 @@
 #include <algorithm>
 #include <omp.h>
 #include <fstream>
+#include <getopt.h>
+#include <string>
 
-typedef float real_t;
+typedef double real_t;
 
-#define N 1600
-#define L 5.0
+int N = 3200;
 
 #define PI 3.14159265358979323846264338328
 
+#define L 21.0
 #define OD_SIZE 1.6
-#define RHO0 1.0
-#define AMP 0.30
 
+#define OUTPUT true
 
 #define W0 (1.0/3.0)  //( P(RHO0)/RHO0 )
 #define ALPHA (2.0/3.0/(1 + W0))
-#define T0 (ALPHA * std::sqrt(3 / (8*PI*RHO0)))
+#define T0 (ALPHA * std::sqrt(3 / (8*PI*rho0)))
 #define RH (T0 / ALPHA)
 
-#define TOL (1.0e-5) // integration tolerance
+#define TOL (1.0e-7) // integration tolerance
 
 
 #define ALLOC(arr_n) \
@@ -37,7 +38,8 @@ typedef float real_t;
     aux_n.rho = (real_t *) malloc(N * ((long long) sizeof(real_t))); \
     aux_n.P = (real_t *) malloc(N * ((long long) sizeof(real_t))); \
     aux_n.dPdA = (real_t *) malloc(N * ((long long) sizeof(real_t))); \
-    aux_n.phi = (real_t *) malloc(N * ((long long) sizeof(real_t)));
+    aux_n.phi = (real_t *) malloc(N * ((long long) sizeof(real_t))); \
+    aux_n.m2oR = (real_t *) malloc(N * ((long long) sizeof(real_t)));
 
 #define AUX_FREE(aux_n) \
     free(aux_n.dRtildedA);\
@@ -46,7 +48,8 @@ typedef float real_t;
     free(aux_n.rho);\
     free(aux_n.P);\
     free(aux_n.dPdA);\
-    free(aux_n.phi);
+    free(aux_n.phi);\
+    free(aux_n.m2oR);
 
 typedef struct {
     real_t *dRtildedA;
@@ -59,6 +62,8 @@ typedef struct {
     real_t *dPdA;
 
     real_t *phi;
+
+    real_t *m2oR;
 } aux_t;
 
 
@@ -123,13 +128,16 @@ void aux_pop(real_t *Rtilde, real_t *mtilde, real_t *Utilde,
     dfdA(mtilde, Abar, aux.dmtildedA);
 
     real_t *gamma = aux.gamma;
+    real_t *m2oR = aux.m2oR;
 #pragma omp parallel for default(shared) private(i)
     for(i=0; i<N; i++)
     {
+        real_t e2ax = std::exp(2 * (1 - ALPHA) * xi);
         real_t AR = Abar[i] * Rtilde[i];
-        gamma[i] = std::sqrt( std::exp(2 * (1 - ALPHA) * xi)
-                       + AR*AR * (Utilde[i]*Utilde[i] - mtilde[i]) );
+        gamma[i] = std::sqrt( e2ax + AR*AR * (Utilde[i]*Utilde[i] - mtilde[i]) );
+        m2oR[i] = Rtilde[i]*Rtilde[i]*mtilde[i]*Abar[i]*Abar[i]/e2ax;
     }
+
 
     real_t *rho = aux.rho;
 #pragma omp parallel for default(shared) private(i)
@@ -152,9 +160,9 @@ void aux_pop(real_t *Rtilde, real_t *mtilde, real_t *Utilde,
 
     real_t *phi = aux.phi;
     phi[N-1] = -1.5*ALPHA*dPdrho(rho[N-1])*std::log(rho[N-1]);
-    phi[N-2] = (rho[N-1] - rho[N-2])*P[N-2] + phi[N-1];
+    phi[N-2] = phi[N-1] + (P[N-1] - P[N-2])/(P[N-2] + rho[N-2]);
     for(i=N-3; i>=0; i--)
-        phi[i] = (rho[i+2] - rho[i])*P[i+1] + phi[i+2];
+        phi[i] = (P[i+2] - P[i])/(P[i+1] + rho[i+1]) + phi[i+2];
 
 }
 
@@ -180,10 +188,6 @@ void k_calc(real_t *Rtilde, real_t *kR_p, real_t *kR_f,
     // Populate auxiliary field values
     aux_pop(kR_f, km_f, kU_f, Abar, xi, aux);
 
-    // need dPdA / A at A = 0  (stored in dPdAoA0)
-    real_t dPdAoA0 = 5.0/3.0*dPdrho(aux.rho[0])
-        *(km_f[1] + km_f[1] - 2*km_f[0]) / Abar[1] / Abar[1];
-
     // fill _f registers with final values
 #pragma omp parallel for default(shared) private(i)
     for(i=0; i<N; i++)
@@ -195,10 +199,11 @@ void k_calc(real_t *Rtilde, real_t *kR_p, real_t *kR_f,
         real_t AR_prime = R + Abar[i]*aux.dRtildedA[i];
 
         real_t dPdAoA = 0;
-        if(i > 0)
-            real_t dPdAoA = dPdAoA0;
+        if(i == 0)
+            dPdAoA = 5.0/3.0*dPdrho(aux.rho[0])
+                *(km_f[1] + km_f[1] - 2*km_f[0]) / Abar[1] / Abar[1];
         else
-            real_t dPdAoA = aux.dPdA[i] / Abar[i];
+            dPdAoA = aux.dPdA[i] / Abar[i];
 
         kR_f[i] = ALPHA*R*(U*ep - 1);
         km_f[i] = 2*m - 3*ALPHA*U*ep*(aux.P[i] + m);
@@ -211,9 +216,97 @@ void k_calc(real_t *Rtilde, real_t *kR_p, real_t *kR_f,
 }
 
 
+void write_output(real_t *Rtilde, real_t *mtilde, real_t *Utilde,
+    real_t *Abar, real_t xi, std::ofstream & output)
+{
+    AUX_ALLOC(aux)
+    aux_pop(Rtilde, mtilde, Utilde, Abar, xi, aux);
+    int i=0;
+
+    for(i=0; i<N; i++) output << Rtilde[i] << " ";
+    output << "\n";
+    for(i=0; i<N; i++) output << mtilde[i] << " ";
+    output << "\n";
+    for(i=0; i<N; i++) output << Utilde[i] << " ";
+    output << "\n";
+    for(i=0; i<N; i++) output << Abar[i] << " ";
+    output << "\n";
+    for(i=0; i<N; i++) output << aux.dRtildedA[i] << " ";
+    output << "\n";
+    for(i=0; i<N; i++) output << aux.dmtildedA[i] << " ";
+    output << "\n";
+    for(i=0; i<N; i++) output << aux.gamma[i] << " ";
+    output << "\n";
+    for(i=0; i<N; i++) output << aux.rho[i] << " ";
+    output << "\n";
+    for(i=0; i<N; i++) output << aux.P[i] << " ";
+    output << "\n";
+    for(i=0; i<N; i++) output << aux.dPdA[i] << " ";
+    output << "\n";
+    for(i=0; i<N; i++) output << aux.phi[i] << " ";
+    output << "\n";
+    for(i=0; i<N; i++) output << aux.m2oR[i] << " ";
+    output << "\n";
+
+    AUX_FREE(aux)
+}
+
+
+
+
 int main(int argc, char **argv)
 {
-    std::cout << "\n===========\nRunning sim.\n===========\n";
+
+    int steps = 1000;
+    real_t amp = 0.3, rho0 = 1.0;
+
+    static struct option long_options[] =
+    {
+        {"steps", required_argument, 0, 's'},
+        {"rho0",  required_argument, 0, 'r'},
+        {"amp",   required_argument, 0, 'a'},
+        {"N",     required_argument, 0, 'N'},
+        {"help",  no_argument,       0, 'h'}
+    };
+
+    int c = 0;
+    while(1)
+    {
+        int option_index = 0;
+        c = getopt_long(argc, argv, "s:r:a:N:h", long_options, &option_index);
+        if(c == -1) // stop if done reading arguments
+            break;
+
+        switch(c)
+        {
+            case 's':
+                steps = std::stoi(optarg);
+                break;
+            case 'r':
+                rho0 = (real_t) std::stod(optarg);
+                break;
+            case 'a':
+                amp = (real_t) std::stod(optarg);
+                break;
+            case 'N':
+                N = std::stoi(optarg);
+                break;
+            case 'h':
+            case '?':
+                fprintf(stderr, "usage: %s \n", argv[0]);
+                fprintf(stderr, "All options are optional; if not specified defaults will be used.\n");
+                return 0;
+            default:
+                fprintf(stderr, "Unrecognized option.\n");
+                return 0;
+        }
+    }
+
+    std::cout << "\n============\nRunning sim.\n============\n";
+    std::cout << "\n";
+    std::cout << "Using "<<steps<<" steps with "<<N<<" gridpoints.\n";
+    std::cout << "  amp = "<<amp<<"\n";
+    std::cout << "  rho0 = "<<rho0<<"\n";
 
     ALLOC(zeros)
     ALLOC(Abar) ALLOC(Rtilde) ALLOC(mtilde) ALLOC(Utilde)
@@ -232,8 +325,8 @@ int main(int argc, char **argv)
     {
         zeros[i] = 0.0;
         Abar[i] = i*L/N;
-        real_t delta0 = AMP * std::exp(-Abar[i]*Abar[i] / 2 / OD_SIZE / OD_SIZE);
-        real_t delta0P = AMP * delta0 * 2 * (-1 / 2 / OD_SIZE / OD_SIZE ) * Abar[i];
+        real_t delta0 = amp * std::exp(-Abar[i]*Abar[i] / 2 / OD_SIZE / OD_SIZE);
+        real_t delta0P = amp * delta0 * 2 * (-1 / 2 / OD_SIZE / OD_SIZE ) * Abar[i];
         mtilde[i] = 1 + delta0;
         Utilde[i] = 1 - ALPHA * delta0 / 2;
         Rtilde[i] = 1 - ALPHA / 2 * (delta0 + W0 * Abar[i] * delta0P / (1 + 3*W0) );
@@ -244,8 +337,8 @@ int main(int argc, char **argv)
     std::ofstream output;
     output.open("output.dat", std::ios::out | std::ios::trunc);
     int s=0;
-    real_t deltaxi = 0.02;
-    for(s=0; s<1000000; s++)
+    real_t deltaxi = 3.67e-5;
+    for(s=0; s<=steps; s++)
     {
         // Run upkeep
 
@@ -253,12 +346,6 @@ int main(int argc, char **argv)
             // if(self.BH_wont_form() == True):
             //     self.timer.stop("adap_run_steps")
             //     return -2
-
-            // if (deltau < 1e-10):
-            //     print("Warning, the time step is too small! Stopping run at step "
-            //         +str(self.step)+" with timestep "+str(deltau))
-            //     self.timer.stop("adap_run_steps")
-            //     return 1
 
             // self.timer.start("delta_calc")
             // if(self.delta == -1):
@@ -276,6 +363,9 @@ int main(int argc, char **argv)
             //     self.timer.stop("adap_run_steps")
             //     return -1
 
+            #pragma omp critical
+            if(s%1000==0 or s==steps)
+                write_output(Rtilde, mtilde, Utilde, Abar, xi, output);
 
         // Integration details
 
@@ -299,40 +389,27 @@ int main(int argc, char **argv)
         k_calc(Rnew, zeros, kR4,  mnew, zeros, km4,
             Unew, zeros, kU4,  Abar, aux, xi, deltaxi,  1.0);
 
-        bool large_err = false;
         real_t E_R_max = 0, E_m_max = 0, E_U_max = 0,
                err_R_max = 0, err_m_max = 0, err_U_max = 0;
-#define MAX_OMP_CHECK(E, E_max) \
-            if( (E) > (E_max) ) { \
-                _Pragma("omp critical") \
-                E_max = E; \
-            }
-#pragma omp parallel for default(shared) private(i)
         for(i=0; i<N; i++)
         {
             real_t E_R = deltaxi*fabs(-5*kR1[i]/72 + kR2[i]/12 + kR3[i]/9 - kR4[i]/8);
-            MAX_OMP_CHECK(E_R, E_R_max)
+            if(E_R > E_R_max) { E_R_max = E_R; }
             real_t E_m = deltaxi*fabs(-5*km1[i]/72 + km2[i]/12 + km3[i]/9 - km4[i]/8);
-            MAX_OMP_CHECK(E_m, E_m_max)
+            if(E_m > E_m_max) { E_m_max = E_m; }
             real_t E_U = deltaxi*fabs(-5*kU1[i]/72 + kU2[i]/12 + kU3[i]/9 - kU4[i]/8);
-            MAX_OMP_CHECK(E_U, E_U_max)
+            if(E_U > E_U_max) { E_U_max = E_U; }
 
             real_t err_R = fabs(Rtilde[i])*TOL;
-            MAX_OMP_CHECK(err_R, err_R_max)
+            if(err_R > err_R_max) { err_R_max = err_R; }
             real_t err_m = fabs(mtilde[i])*TOL;
-            MAX_OMP_CHECK(err_m, err_m_max)
+            if(err_m > err_m_max) { err_m_max = err_m; }
             real_t err_U = fabs(Utilde[i])*TOL;
-            MAX_OMP_CHECK(err_U, err_U_max)
-
-            if( E_R > err_R || E_m > err_m || E_U > err_U)
-            {
-                #pragma omp critical
-                large_err = true;
-            }
+            if(err_U > err_U_max) { err_U_max = err_U; }
         }
 
         // final field values at the end of the integration step.
-        if(!large_err)
+        if(E_R_max < err_R_max and E_m_max < err_m_max and E_U_max < err_U_max)
         {
             for(i=0; i<N; i++)
             {
@@ -349,24 +426,18 @@ int main(int argc, char **argv)
         q = std::min(q, (real_t) 5.0); // limit stepsize growth
         deltaxi *= q;
 
-        if(deltaxi < 1.0e-11 || deltaxi > 1.0 || std::isnan(err_R_max) || std::isinf(err_R_max))
+        bool hasnan = false;
+        for(i=0; i<N; i++)
+            if(std::isnan(Rtilde[i]))
+                hasnan = true;
+        if(deltaxi < 1.0e-11 || deltaxi > 1.0 || hasnan)
         {
             std::cout << "Error at step "<<s<<". q was "<<q<<"\n";
             std::cout << "Errors were "<<err_R_max<<", "<<err_m_max<<", "<<err_U_max<<"\n";
             std::cout << "            "<<E_R_max<<", "<<E_m_max<<", "<<E_U_max<<"\n";
             std::cout << "deltaxi was "<<deltaxi<<"\n";
+            write_output(Rtilde, mtilde, Utilde, Abar, xi, output);
             break;
-        }
-
-        #pragma omp critical
-        if(s%500==0)
-        {
-            for(i=0; i<N; i++) output << Rtilde[i] << " ";
-            output << "\n";
-            for(i=0; i<N; i++) output << mtilde[i] << " ";
-            output << "\n";
-            for(i=0; i<N; i++) output << Utilde[i] << " ";
-            output << "\n";
         }
 
     }
@@ -375,6 +446,7 @@ int main(int argc, char **argv)
     std::cout << "Final xi after step "<<s<<" was "<< xi <<", deltaxi was "<<deltaxi<<".\n";
 
     output.close();
+
     free(zeros);
     free(Abar); free(Rtilde); free(mtilde); free(Utilde);
     free(kR1); free(kR2); free(kR3); free(kR4); free(Rnew);

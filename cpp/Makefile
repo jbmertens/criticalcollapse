@@ -20,7 +20,7 @@ endif
 
 # fast math
 ifeq ($(fast), 1)
-	CC_OPTIMIZE += -ffast-math -flto
+	CC_OPTIMIZE += -ffast-math -flto -fno-finite-math-only
 endif
 
 # profiling
