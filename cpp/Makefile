@@ -10,12 +10,18 @@ EXEC = ms
 CC_OPTS = -fopenmp
 CC_LINKS = -lm -fopenmp
 
+# enable debug mode
+ifeq ($(shared), 1)
+	CC_OPTS += -fPIC -shared
+	CC_LINKS += -shared
+	EXEC = ms.so
+endif
 
 # enable debug mode
 ifeq ($(debug), 1)
 	CC_OPTIMIZE = -O0 -g -Wall -std=c++17
 else
-	CC_OPTIMIZE = -O3 -std=c++17
+	CC_OPTIMIZE = -O2 -std=c++17
 endif
 
 # fast math
