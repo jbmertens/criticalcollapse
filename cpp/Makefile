@@ -8,7 +8,7 @@ OBJ = $(patsubst %.cc, %.o, $(SRC))
 EXEC = ms
 
 CC_OPTS = -fopenmp
-CC_LINKS = -lm -fopenmp
+CC_LINKS = -lm -fopenmp -I/usr/include/
 
 # enable debug mode
 ifeq ($(shared), 1)
