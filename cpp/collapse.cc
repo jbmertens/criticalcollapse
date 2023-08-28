@@ -113,8 +113,8 @@ real_t dPdrho(real_t rhot, real_t rho_b)
         return fixw;
 
     real_t Pt = Pt_of_rhot(rhot, rho_b);
-    real_t rho = rhot*rhob;
-    real_t P = Pt*rhob;
+    real_t rho = rhot*rho_b;
+    real_t P = Pt*rho_b;
     real_t logrho = std::log(rho);
 
     real_t dPdrho_in = P/rho*loglog_Pinterp.deriv(1, logrho);
@@ -153,7 +153,7 @@ void dfdA(real_t *f, real_t *A, real_t *dfdA)
  * Uses a "staggered" grid to improve stability.
  * Assume dPtdAb is 0 at boundaries.
  */
-void dPtdAbstg(real_t *agg, real_t *dPtdAb)
+void dPtdAbstg(real_t *agg, real_t *dPtdAb, real_t rho_b)
 {
     int i=0;
 
@@ -173,7 +173,7 @@ void dPtdAbstg(real_t *agg, real_t *dPtdAb)
         real_t mt_stg = (mt[i]+mt[i+1])/2;
         real_t rhot_stg = mt_stg + Ab_stg*Rt_stg*(mt[i+1] - mt[i])
                             / 3 / (Ab[i+1]*Rt[i+1] - Ab[i]*Rt[i]);
-        Pt_stg = Pt_of_rhot(rhot_stg);
+        Pt_stg = Pt_of_rhot(rhot_stg, rho_b);
 
         dPtdAb[i] = (Pt_stg - Pt_stg_prev)/(Ab_stg - Ab_stg_prev);
     }
@@ -205,15 +205,15 @@ void agg_pop(real_t * agg, real_t l)
     real_t *dmtdAb = agg + 5*NN;
     real_t *gammab = agg + 6*NN;
     real_t *rhot   = agg + 7*NN;
-    real_t *Pr     = agg + 8*NN;
+    real_t *Pt     = agg + 8*NN;
     real_t *dPtdAb = agg + 9*NN;
     real_t *phi    = agg + 10*NN;
     real_t *m2oR   = agg + 11*NN;
     real_t *Qt     = agg + 12*NN;
 
     // Derivatives of R and m wrt. Ab, used later
-    dfdA(Rt, Ab, dRtdA);
-    dfdA(mt, Ab, dmtdA);
+    dfdA(Rt, Ab, dRtdAb);
+    dfdA(mt, Ab, dmtdAb);
 
     // compute gamma and 2*m/R, used later
 #pragma omp parallel for default(shared) private(i)
@@ -240,10 +240,10 @@ void agg_pop(real_t * agg, real_t l)
     // Compute pressure (P tilde)
 #pragma omp parallel for default(shared) private(i)
     for(i=0; i<NN; i++)
-        Pt[i] = Pt_of_rhot(rhot[i]);
+        Pt[i] = Pt_of_rhot(rhot[i], rho_b);
 
     // Compute derivative of pressure, using staggered grid
-    dPtdAbstg(Rt, mt, Ab, dPtdAb);
+    dPtdAbstg(agg, dPtdAb, rho_b);
 
     // Compute (artificial) viscosity
     real_t kappa = 2.0;
@@ -257,7 +257,7 @@ void agg_pop(real_t * agg, real_t l)
             real_t AbRtp = (Ab[i+1]*Rt[i+1] - Ab[i-1]*Rt[i-1]) / d2Ab;
             real_t AbRtUtp = (Ab[i+1]*Rt[i+1]*Ut[i+1] - Ab[i-1]*Rt[i-1]*Ut[i-1]) / d2Ab;
             if(AbRtp*Ut[i] < -Ab[i]*Rt[i]*Utp)
-                Qt[i] = kappa*(d2Ab/2)*(d2Ab/2)/e2ax*AbRtUtp*AbRtUtp;
+                Qt[i] = kappa*(d2Ab/2)*(d2Ab/2)/e2l*AbRtUtp*AbRtUtp;
             else
                 Qt[i] = 0;
         }
@@ -331,7 +331,7 @@ void k_calc(real_t *agg,
 
         real_t dPtdAboAb = 0;
         if(i == 0)
-            dPtdAboAb = 5.0/3.0*dPdrho(rhot[0])
+            dPtdAboAb = 5.0/3.0*dPdrho(rhot[0], rho_b)
                 *(mt[1] + mt[1] - 2*mt[0]) / Ab[1] / Ab[1];
         else
             dPtdAboAb = dPtdAb[i] / Ab[i];
@@ -339,7 +339,7 @@ void k_calc(real_t *agg,
         kR_f[i] = Rt[i]*(Ut[i]*ep - 1);
         km_f[i] = 2/alpha*mt[i] - 3*Ut[i]*ep*(Pt[i] + mt[i]);
         kU_f[i] = Ut[i]/alpha - ep*(
-            gamma[i]*gamma[i]*dPtdAboAb / (Rt[i]*AbRt_prime*(rhot[i] + Pt[i]))
+            gammat[i]*gammat[i]*dPtdAboAb / (Rt[i]*AbRt_prime*(rhot[i] + Pt[i]))
             + (2*Ut[i]*Ut[i] + mt[i] + 3*Pt[i])/2.0
         );
     }
@@ -389,7 +389,7 @@ int run_sim(real_t *agg, real_t &l, int steps, int output_interval)
     output.open("output.dat", std::ios::out | std::ios::binary | std::ios::trunc);
     int s=0;
     real_t deltal = 3.67e-5;
-    real_t max_rho0 = 0.0, prev_rho0 = 0.0;
+    real_t max_rho0 = 0.0, prev_rho0 = 0.0, rho0 = 0.0;
     for(s=0; s<=steps; s++)
     {
         // Upkeep
@@ -436,9 +436,9 @@ int run_sim(real_t *agg, real_t &l, int steps, int output_interval)
         {
             for(i=0; i<NN; i++)
             {
-                Rt[i] = Rt[i] + deltaxi/9*(2*kR1[i] + 3*kR2[i] + 4*kR3[i] );
-                mt[i] = mt[i] + deltaxi/9*(2*km1[i] + 3*km2[i] + 4*km3[i] );
-                Ut[i] = Ut[i] + deltaxi/9*(2*kU1[i] + 3*kU2[i] + 4*kU3[i] );
+                Rt[i] = Rt[i] + deltal/9*(2*kR1[i] + 3*kR2[i] + 4*kR3[i] );
+                mt[i] = mt[i] + deltal/9*(2*km1[i] + 3*km2[i] + 4*km3[i] );
+                Ut[i] = Ut[i] + deltal/9*(2*kU1[i] + 3*kU2[i] + 4*kU3[i] );
             }
             l = l + deltal;
         }
@@ -487,11 +487,11 @@ int run_sim(real_t *agg, real_t &l, int steps, int output_interval)
         if(deltal < 1.0e-11 || deltal > 1.0 || hasnan)
         {
             std::cout << "Error at step "<<s<<". q was "<<q<<"\n";
-            std::cout << "Errors were "<<err_R_max<<", "<<err_m_max<<", "<<err_U_max<<"\n";
-            std::cout << "            "<<E_R_max<<", "<<E_m_max<<", "<<E_U_max<<"\n";
+            std::cout << "Tolerances were "<<tol_R_max<<", "<<tol_m_max<<", "<<tol_U_max<<"\n";
+            std::cout << "Errors were     "<<E_R_max<<", "<<E_m_max<<", "<<E_U_max<<"\n";
             std::cout << "deltal was "<<deltal<<"\n";
             if(output_interval > 0)
-                write_output(agg, xi, output);
+                write_output(agg, l, output);
             break;
         }
 
@@ -505,9 +505,9 @@ int run_sim(real_t *agg, real_t &l, int steps, int output_interval)
     agg_pop(agg, l);
 
     free(zeros); free(Abar); free(Rt); free(mt); free(Ut);
-    free(kR1); free(kR2); free(kR3); free(kR4); free(Rnew);
-    free(km1); free(km2); free(km3); free(km4); free(mnew);
-    free(kU1); free(kU2); free(kU3); free(kU4); free(Unew);
+    free(kR1); free(kR2); free(kR3); free(kR4); free(kRi);
+    free(km1); free(km2); free(km3); free(km4); free(kmi);
+    free(kU1); free(kU2); free(kU3); free(kU4); free(kUi);
 
     return flag;
 }
