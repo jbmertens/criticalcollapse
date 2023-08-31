@@ -44,7 +44,7 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-function"
 
-typedef float tkreal_t;
+typedef double tkreal_t;
 
 namespace tk
 {
@@ -67,17 +67,17 @@ public:
     };
 
 protected:
-    std::vector<tkreal_t> m_x,m_y;            // x,y coordinates of points
+    std::vector<tkreal_t> m_x, m_y;           // x,y coordinates of points
     // interpolation parameters
     // f(x) = a_i + b_i*(x-x_i) + c_i*(x-x_i)^2 + d_i*(x-x_i)^3
     // where a_i = y_i, or else it won't go through grid points
-    std::vector<tkreal_t> m_b,m_c,m_d;        // spline coefficients
+    std::vector<tkreal_t> m_b, m_c, m_d;      // spline coefficients
     tkreal_t m_c0;                            // for left extrapolation
     spline_type m_type;
     bd_type m_left, m_right;
     tkreal_t  m_left_value, m_right_value;
     bool m_made_monotonic;
-    void set_coeffs_from_b();               // calculate c_i, d_i from b_i
+    void set_coeffs_from_b();                 // calculate c_i, d_i from b_i
     size_t find_closest(tkreal_t x) const;    // closest idx so that m_x[idx]<=x
 
 public:

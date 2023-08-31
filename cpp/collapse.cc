@@ -9,15 +9,18 @@
 #include <vector>
 #include "spline.h"
 
-typedef float real_t;
+typedef double real_t;
 
 int NN = 3200;
 
 #define PI 3.14159265358979323846264338328
 #define TOL (1.0e-7) // integration tolerance
-#define RHO_B_I 0.1
+#define RHO_B_I 1.0e25
 
 #define NFIELDS 13
+
+bool USE_FIXW = false;
+real_t FIXW = 1.0/3.0;
 
 #define ALLOC_N(arr_n, ARR_SIZE) \
     real_t *arr_n; \
@@ -27,38 +30,82 @@ int NN = 3200;
     ALLOC_N(arr_n, NN)
 
 // Arrays for equation of state interpolation
-std::vector<real_t> logrho{-23.0258509, 1.25944027,  5.86743592, 10.47443832, 12.80727797, 16.24077033,
+std::vector<real_t> logrhos{-23.0258509, 1.25944027,  5.86743592, 10.47443832, 12.80727797, 16.24077033,
    20.17741006, 21.87146739, 22.54685293, 24.86073802, 25.88516263, 30.81629677,
    40.14966858, 42.94194384, 45.77729053, 49.56660234, 53.73838727, 92.1034037};
-std::vector<real_t> logP{-24.1244632, 0.15168708,  4.7676633 ,  9.37390511, 11.68836246, 15.05383501,
+std::vector<real_t> logPs{-24.1244632, 0.15168708,  4.7676633 ,  9.37390511, 11.68836246, 15.05383501,
    18.98355404, 20.54248356, 21.11727849, 23.49996688, 24.58907975, 29.64524541,
    39.04613022, 41.81963086, 44.6428769 , 48.43776105, 52.63885477, 91.0047914};
 // Interpolating function
-tk::spline loglog_Pinterp(logrho, logP);
-// 
+tk::spline logPoflogrho(logrhos, logPs);
+// min and max values in spline
 real_t SPL_MIN_RHO=1e0;
 real_t SPL_MAX_RHO=1e23;
 
 
-bool use_fixw = false;
-real_t fixw = 1.0/3.0;
+// Background density as a function of ell
+class RhoBIntegrator
+{
+public:
+    real_t dl = 0.002538901;
+    std::vector<real_t> ls;
+    std::vector<real_t> logrho_of_ls;
+
+    tk::spline spl;
+
+    RhoBIntegrator()
+    {
+        ls.push_back(0.0);
+        logrho_of_ls.push_back(std::log(RHO_B_I));
+
+        while( logrho_of_ls.back() > -7 )
+        {
+            real_t l = ls.back();
+            real_t logrho = logrho_of_ls.back();
+
+            real_t k1 = -3.0*( 1.0 + std::exp( logPoflogrho(logrho) - logrho ) )*dl;
+            real_t k2 = -3.0*( 1.0 + std::exp( logPoflogrho(logrho+k1/2.0) - (logrho+k1/2.0) ) )*dl;
+            real_t k3 = -3.0*( 1.0 + std::exp( logPoflogrho(logrho+k2/2.0) - (logrho+k2/2.0) ) )*dl;
+            real_t k4 = -3.0*( 1.0 + std::exp( logPoflogrho(logrho+k3) - (logrho+k3) ) )*dl;
+
+            ls.push_back(l+dl);
+            logrho_of_ls.push_back( logrho + (k1+2*k2+2*k3+k4)/6.0 );
+        }
+
+        std::cout << "Initializing background integrator. Max l was "<<ls.back()<<"\n";
+        spl.set_points(ls, logrho_of_ls, tk::spline::cspline);
+    }
+
+    real_t eval(real_t l)
+    {
+        return spl(l);
+    }
+};
+RhoBIntegrator logrhob_of_l = RhoBIntegrator();
 
 /**
  * Background density at a given l = log(a), with a the scale factor.
  */
+extern "C"
 real_t rho_background(real_t l)
 {
-    // TODO
-    return 1.0;
+    if(USE_FIXW)
+        return RHO_B_I*std::exp(-3.0*(1.0+FIXW)*l);
+
+    return std::exp( logrhob_of_l.spl(l) );
 }
 
 /**
  * Background pressure at a given l = log(a), with a the scale factor.
  */
+extern "C"
 real_t P_background(real_t l)
 {
-    real_t log_rho_b = std::log(rho_background(l));
-    return std::exp(loglog_Pinterp(log_rho_b));
+    if(USE_FIXW)
+        return FIXW*rho_background(l);
+
+    real_t log_rho_b = logrhob_of_l.spl(l);
+    return std::exp( logPoflogrho(log_rho_b) );
 }
 
 /**
@@ -73,59 +120,72 @@ real_t H(real_t rho, real_t rho0, real_t mu = 2)
 }
 
 /**
+ * Return P of \rho
+ */
+extern "C"
+real_t P_of_rho(real_t rho)
+{
+    if(rho < 1.0e-10)
+        rho = 1.0e-10;
+
+    if(USE_FIXW)
+        return FIXW*rho;
+
+    real_t logrho = std::log(rho);
+
+    if(logrho < -23.0 or logrho > 93.0)
+        return rho/3.0;
+
+    real_t P_in = std::exp(logPoflogrho(logrho));
+    real_t P_out = rho/3.0;
+    real_t P = P_out + H(rho, SPL_MIN_RHO)*H(SPL_MAX_RHO, rho)*(P_in - P_out);
+
+    return P;
+}
+
+/**
  * Compute \tilde{P} of \tilde{\rho}, assuming a
  * specific background density rho_b.
  */
 extern "C"
 real_t Pt_of_rhot(real_t rhot, real_t rho_b)
 {
-    if(rhot < 1.0e-10)
-        rhot = 1.0e-10;
-
-    if(use_fixw)
-        return fixw*rhot;
-
     real_t rho = rhot*rho_b;
-    real_t logrho = std::log(rho);
-
-    if(logrho < -23.0 or logrho > 93.0)
-        return rho/3.0;
-
-    real_t P_in = std::exp(loglog_Pinterp(logrho));
-    real_t P_out = rho/3.0;
-    real_t P = P_out + H(rho, SPL_MIN_RHO)*H(SPL_MAX_RHO, rho)*(P_in - P_out);
-
+    real_t P = P_of_rho(rho);
     real_t Pt = P/rho_b;
     return Pt;
 }
 
 /**
- * Compute d\tilde{P}/d\tilde{\rho} (or, equivalently, dP/drho) assuming a
- * specific background density rho_b.
+ * Compute dP/d\rho, at a specific \rho (not tilded!)
  */
 extern "C" 
-real_t dPdrho(real_t rhot, real_t rho_b)
+real_t dPdrho(real_t rho)
 {
-    if(rhot < 1.0e-10)
-        rhot = 1.0e-10;
+    if(rho < 1.0e-10)
+        rho = 1.0e-10;
 
-    if(use_fixw)
-        return fixw;
+    if(USE_FIXW)
+        return FIXW;
 
-    real_t Pt = Pt_of_rhot(rhot, rho_b);
-    real_t rho = rhot*rho_b;
-    real_t P = Pt*rho_b;
+    real_t P = P_of_rho(rho);
     real_t logrho = std::log(rho);
 
-    real_t dPdrho_in = P/rho*loglog_Pinterp.deriv(1, logrho);
+    real_t dPdrho_in = P/rho*logPoflogrho.deriv(1, logrho);
     real_t dPdrho_out = 1.0/3.0;
     real_t dPdrho = dPdrho_out + H(rho, SPL_MIN_RHO)*H(SPL_MAX_RHO, rho)*(dPdrho_in - dPdrho_out);
 
     return dPdrho;
 }
-real_t dPtdrhot(real_t rhot, real_t rho_b)
+
+/**
+ * Compute dP/d\rho, at a specific \rho = \tilde{rho}*\rho_b.
+ */
+extern "C" 
+real_t dPdrho_rhot(real_t rhot, real_t rho_b)
 {
-    return dPdrho(rhot, rho_b);
+    real_t rho = rhot*rho_b;
+    return dPdrho(rho);
 }
 
 /**
@@ -135,7 +195,6 @@ real_t dPtdrhot(real_t rhot, real_t rho_b)
 void dfdA(real_t *f, real_t *A, real_t *dfdA)
 {
     dfdA[0] = 0;
-    dfdA[NN-1] = 0;
 
     int i=0;
 #pragma omp parallel for default(shared) private(i)
@@ -146,6 +205,8 @@ void dfdA(real_t *f, real_t *A, real_t *dfdA)
             + (f[i]-f[i-1]) / (A[i]-A[i-1])
         );
     }
+
+    dfdA[NN-1] = (f[NN-1]-f[NN-2]) / (A[NN-1]-A[NN-2]);
 }
 
 /**
@@ -219,9 +280,9 @@ void agg_pop(real_t * agg, real_t l)
 #pragma omp parallel for default(shared) private(i)
     for(i=0; i<NN; i++)
     {
-        real_t AbRt = Ab[i]*Rt[i];
-        gammab[i] = std::sqrt( RHO_B_I/rho_b/e2l + AbRt*AbRt*(Ut[i]*Ut[i] - mt[i]) );
-        m2oR[i] = e2l*(rho_b/RHO_B_I)*Ab[i]*Ab[i]*Rt[i]*Rt[i]*mt[i];
+        real_t AbRt2 = Ab[i]*Rt[i]*Ab[i]*Rt[i];
+        gammab[i] = std::sqrt( RHO_B_I/rho_b/e2l + AbRt2*(Ut[i]*Ut[i] - mt[i]) );
+        m2oR[i] = e2l*rho_b/RHO_B_I*AbRt2*mt[i];
     }
 
 
@@ -261,12 +322,15 @@ void agg_pop(real_t * agg, real_t l)
             else
                 Qt[i] = 0;
         }
-        Qt[NN-1] = Qt[NN-2];
         Qt[0] = Qt[1];
+        Qt[NN-1] = Qt[NN-2];
 
         // Smooth the viscosity curve a bit
-        for(i=2; i<NN-2; i++)
-            Qt[i] = (Qt[i-2]+2*Qt[i-1]+3*Qt[i]+2*Qt[i+1]+Qt[i+2])/9.0;
+        Qt[0] = (4*Qt[0] + 3*Qt[1] + 2*Qt[2] + Qt[3])/10.0;
+        Qt[1] = (3*Qt[0] + 4*Qt[1] + 3*Qt[2] + 2*Qt[3] + Qt[4])/13.0;
+        Qt[2] = (2*Qt[0] + 3*Qt[1] + 4*Qt[2] + 3*Qt[3] + 2*Qt[4] + Qt[5])/15.0;
+        for(i=3; i<NN-3; i++)
+            Qt[i] = (Qt[i-3]+2*Qt[i-2]+3*Qt[i-1]+4*Qt[i]+3*Qt[i+1]+2*Qt[i+2]+1*Qt[i+3])/16.0;
 
 #pragma omp parallel for default(shared) private(i)
         for(i=0; i<NN; i++)
@@ -277,15 +341,17 @@ void agg_pop(real_t * agg, real_t l)
     // chosen; shifting it by a constant amounts to re-scaling the time
     // coordinate. We use Eq. 51, Assuming radiation-dominated cosmology values
     // for the equation of state. Close to zero works, anyways.
-    phi[NN-1] = -std::log(rhot[NN-1])/4.0;
-    phi[NN-2] = phi[NN-1] + (Pt[NN-1] - Pt[NN-2])/(Pt[NN-2] + rhot[NN-2]);
+    phi[NN-1] = -std::log(rhot[NN-1])/2.0;
+    phi[NN-2] = phi[NN-1] + (Pt[NN-1] - Pt[NN-2])*2.0/(Pt[NN-2] + Pt[NN-1] + rhot[NN-2] + rhot[NN-1]);
     for(i=NN-3; i>=0; i--)
         phi[i] = (Pt[i+2] - Pt[i])/(Pt[i+1] + rhot[i+1]) + phi[i+2];
 }
 
-
-// Compute Runge-Kutta 'k' coefficients
-void k_calc(real_t *agg,
+/**
+ *  Compute Runge-Kutta 'k' coefficients
+ *  kR_f = F( agg + deltal*kcoeff*k_p )
+ */
+void k_calc(real_t *agg, real_t *tmp_agg,
     real_t *kR_p, real_t *kR_f,
     real_t *km_p, real_t *km_f,
     real_t *kU_p, real_t *kU_f,
@@ -294,7 +360,6 @@ void k_calc(real_t *agg,
     int i=0;
 
     // Populate temporary agg array with computed values
-    ALLOC_N(tmp_agg, NFIELDS*NN)
 #pragma omp parallel for default(shared) private(i)
     for(i=0; i<NN; i++)
     {
@@ -312,7 +377,7 @@ void k_calc(real_t *agg,
     real_t *Ut     = tmp_agg + 3*NN;
     real_t *dRtdAb = tmp_agg + 4*NN;
     real_t *dmtdAb = tmp_agg + 5*NN;
-    real_t *gammat = tmp_agg + 6*NN;
+    real_t *gammab = tmp_agg + 6*NN;
     real_t *rhot   = tmp_agg + 7*NN;
     real_t *Pt     = tmp_agg + 8*NN;
     real_t *dPtdAb = tmp_agg + 9*NN;
@@ -331,15 +396,16 @@ void k_calc(real_t *agg,
 
         real_t dPtdAboAb = 0;
         if(i == 0)
-            dPtdAboAb = 5.0/3.0*dPdrho(rhot[0], rho_b)
+            dPtdAboAb = 5.0/3.0*dPdrho_rhot(rhot[0], rho_b)
                 *(mt[1] + mt[1] - 2*mt[0]) / Ab[1] / Ab[1];
         else
             dPtdAboAb = dPtdAb[i] / Ab[i];
 
+        // equations of motion
         kR_f[i] = Rt[i]*(Ut[i]*ep - 1);
-        km_f[i] = 2/alpha*mt[i] - 3*Ut[i]*ep*(Pt[i] + mt[i]);
+        km_f[i] = 2.0/alpha*mt[i] - 3*Ut[i]*ep*(Pt[i] + mt[i]);
         kU_f[i] = Ut[i]/alpha - ep*(
-            gammat[i]*gammat[i]*dPtdAboAb / (Rt[i]*AbRt_prime*(rhot[i] + Pt[i]))
+            gammab[i]*gammab[i]*dPtdAboAb / (Rt[i]*AbRt_prime*(rhot[i] + Pt[i]))
             + (2*Ut[i]*Ut[i] + mt[i] + 3*Pt[i])/2.0
         );
     }
@@ -374,6 +440,7 @@ int run_sim(real_t *agg, real_t &l, int steps, int output_interval)
     real_t *Rt        = agg + 1*NN;
     real_t *mt        = agg + 2*NN;
     real_t *Ut        = agg + 3*NN;
+    ALLOC_N(tmp_agg, NFIELDS*NN)
     ALLOC(zeros)
     ALLOC(kR1) ALLOC(kR2) ALLOC(kR3) ALLOC(kR4) ALLOC(kRi)
     ALLOC(km1) ALLOC(km2) ALLOC(km3) ALLOC(km4) ALLOC(kmi)
@@ -399,9 +466,9 @@ int run_sim(real_t *agg, real_t &l, int steps, int output_interval)
                 write_output(agg, l, output);
 
         // Integration details
-        k_calc(agg,  zeros, kR1,  zeros, km1,  zeros, kU1,  l, deltal,  0.0);
-        k_calc(agg,  kR1, kR2,    km1, km2,    kU1, kU2,    l, deltal,  0.5);
-        k_calc(agg,  kR2, kR3,    km2, km3,    kU2, kU3,    l, deltal,  0.75);
+        k_calc(agg, tmp_agg,  zeros, kR1,  zeros, km1,  zeros, kU1,  l, deltal,  0.0);
+        k_calc(agg, tmp_agg,  kR1, kR2,    km1, km2,    kU1, kU2,    l, deltal,  0.5);
+        k_calc(agg, tmp_agg,  kR2, kR3,    km2, km3,    kU2, kU3,    l, deltal,  0.75);
 #pragma omp parallel for default(shared) private(i)
         for(i=0; i<NN; i++)
         {
@@ -409,18 +476,18 @@ int run_sim(real_t *agg, real_t &l, int steps, int output_interval)
             kmi[i] = ( 2*km1[i] + 3*km2[i] + 4*km3[i] )/9.0;
             kUi[i] = ( 2*kU1[i] + 3*kU2[i] + 4*kU3[i] )/9.0;
         }
-        k_calc(agg,  kRi, kR4,  kmi, km4,  kUi, kU4,  l, deltal,  1.0);
+        k_calc(agg, tmp_agg,  kRi, kR4,  kmi, km4,  kUi, kU4,  l, deltal,  1.0);
 
         // Determine maximum errors
         real_t E_R_max = 0, E_m_max = 0, E_U_max = 0,
                tol_R_max = 0, tol_m_max = 0, tol_U_max = 0;
         for(i=0; i<NN; i++)
         {
-            real_t E_R = deltal*fabs(-5*kR1[i]/72 + kR2[i]/12 + kR3[i]/9 - kR4[i]/8);
+            real_t E_R = deltal*fabs(-5.0*kR1[i]/72.0 + kR2[i]/12.0 + kR3[i]/9.0 - kR4[i]/8.0);
             if(E_R > E_R_max) { E_R_max = E_R; }
-            real_t E_m = deltal*fabs(-5*km1[i]/72 + km2[i]/12 + km3[i]/9 - km4[i]/8);
+            real_t E_m = deltal*fabs(-5.0*km1[i]/72.0 + km2[i]/12.0 + km3[i]/9.0 - km4[i]/8.0);
             if(E_m > E_m_max) { E_m_max = E_m; }
-            real_t E_U = deltal*fabs(-5*kU1[i]/72 + kU2[i]/12 + kU3[i]/9 - kU4[i]/8);
+            real_t E_U = deltal*fabs(-5.0*kU1[i]/72.0 + kU2[i]/12.0 + kU3[i]/9.0 - kU4[i]/8.0);
             if(E_U > E_U_max) { E_U_max = E_U; }
 
             real_t tol_R = fabs(Rt[i])*TOL;
@@ -430,7 +497,7 @@ int run_sim(real_t *agg, real_t &l, int steps, int output_interval)
             real_t tol_U = fabs(Ut[i])*TOL;
             if(tol_U > tol_U_max) { tol_U_max = tol_U; }
         }
-
+        
         // final field values at the end of the integration step.
         if(E_R_max < tol_R_max && E_m_max < tol_m_max && E_U_max < tol_U_max)
         {
@@ -446,10 +513,14 @@ int run_sim(real_t *agg, real_t &l, int steps, int output_interval)
 
 
         // adjust step size for next step
-        real_t q = 0.75*std::pow( std::min(tol_R_max/E_R_max,
-            std::min(tol_m_max/E_m_max, tol_U_max/E_U_max) ), 1.0/3.0);
-        q = std::min(q, (real_t) 5.0); // limit stepsize growth
-        deltal *= q;
+        real_t q = -1.0;
+        if(!(E_R_max == 0 || E_m_max == 0 || E_U_max == 0))
+        {
+            q = 0.5*std::pow( std::min(tol_R_max/E_R_max,
+                std::min(tol_m_max/E_m_max, tol_U_max/E_U_max) ), 1.0/3.0);
+            q = std::min(q, (real_t) 2.0); // limit stepsize growth
+            deltal *= q;
+        }
 
 
         // if(self.delta == -1):
@@ -482,11 +553,15 @@ int run_sim(real_t *agg, real_t &l, int steps, int output_interval)
         // Error checking
         bool hasnan = false;
         for(i=0; i<NN; i++)
-            if(std::isnan(Rt[i]))
+            if(std::isnan(Rt[i]) || fabs(Rt[i]) > 1.0e10)
+            {
+                if(hasnan == false)
+                    std::cout << "NaN detected.\n" << std::flush;
                 hasnan = true;
+            }
         if(deltal < 1.0e-11 || deltal > 1.0 || hasnan)
         {
-            std::cout << "Error at step "<<s<<". q was "<<q<<"\n";
+            std::cout << "Error at step "<<s<<". q was "<<q<<", l was "<<l<<"\n";
             std::cout << "Tolerances were "<<tol_R_max<<", "<<tol_m_max<<", "<<tol_U_max<<"\n";
             std::cout << "Errors were     "<<E_R_max<<", "<<E_m_max<<", "<<E_U_max<<"\n";
             std::cout << "deltal was "<<deltal<<"\n";
@@ -504,7 +579,7 @@ int run_sim(real_t *agg, real_t &l, int steps, int output_interval)
 
     agg_pop(agg, l);
 
-    free(zeros); free(Abar); free(Rt); free(mt); free(Ut);
+    free(zeros);
     free(kR1); free(kR2); free(kR3); free(kR4); free(kRi);
     free(km1); free(km2); free(km3); free(km4); free(kmi);
     free(kU1); free(kU2); free(kU3); free(kU4); free(kUi);
@@ -513,20 +588,16 @@ int run_sim(real_t *agg, real_t &l, int steps, int output_interval)
 }
 
 /**
- * Set initial conditions. Assumes a pure-radiation era, i.e.
- * significantly before the QCD transition.
+ * Set initial conditions. Valid only assuming a constant equation of state,
+ * i.e. fixed. w. For radiation, this means significantly before the QCD
+ * transition.
+ * 
  * amp is the perturbation amplitude,
  * d is the perturbation size in horizon units.
  */
 extern "C"
 void ics(real_t *agg, real_t &l, real_t amp, real_t d, int n)
 {
-    std::cout << "\n==================\nInitializing sim.\n==================\n" << std::flush;
-    std::cout << "\n";
-    std::cout << "Using "<<NN<<" gridpoints, amplitude "
-                    <<amp<<", perturbation size "<<d<<".\n";
-    std::cout << "\n" << std::flush;
-
     NN = n;
     l = 0;
 
@@ -535,8 +606,15 @@ void ics(real_t *agg, real_t &l, real_t amp, real_t d, int n)
     real_t *mt        = agg + 2*NN;
     real_t *Ut        = agg + 3*NN;
 
-    real_t w_rad = 1.0/3.0;
-    real_t alpha = 0.5; // Eq. 36
+    std::cout << "\n==================\nInitializing sim.\n==================\n" << std::flush;
+    std::cout << "\n";
+    std::cout << "Using "<<NN<<" gridpoints, amplitude "
+                    <<amp<<", perturbation size "<<d<<".\n";
+    std::cout << "\n" << std::flush;
+
+
+    real_t rho_b = rho_background(l);
+    real_t alpha = 2.0/3.0*rho_b/( rho_b + P_background(l) ); // Eq. 36, sort of
     
     real_t L = 20.0*d; // Simulation size
 
