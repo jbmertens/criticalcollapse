@@ -11,14 +11,15 @@
 
 typedef double real_t;
 
-int NN = 3200;
-
 #define PI 3.14159265358979323846264338328
 #define TOL (1.0e-7) // integration tolerance
 #define RHO_B_I 1.0e25
-
 #define NFIELDS 13
 
+
+int NN = 3200;
+bool USE_WENO = true;
+bool SMOOTH_RHO = true;
 bool USE_FIXW = false;
 real_t FIXW = 1.0/3.0;
 
@@ -41,6 +42,22 @@ tk::spline logPoflogrho(logrhos, logPs);
 // min and max values in spline
 real_t SPL_MIN_RHO=1e0;
 real_t SPL_MAX_RHO=1e23;
+
+template <typename T> int sgn(T val)
+{
+    return (T(0) < val) - (val < T(0));
+}
+
+real_t max(real_t *f)
+{
+    real_t fmax = f[0];
+
+#pragma omp parallel for reduction(max:fmax) 
+    for(int i=0; i<NN; i++)
+       fmax = fmax > f[i] ? fmax : f[i];
+
+    return fmax;
+}
 
 
 // Background density as a function of ell
@@ -210,6 +227,79 @@ void dfdA(real_t *f, real_t *A, real_t *dfdA)
 }
 
 /**
+ * Helper function to compute WENO weighted values on staggered grid
+ * https://apps.dtic.mil/sti/tr/pdf/ADA390653.pdf
+ * 
+ * values in _stg grid are at f[i+1/2], assuming symmetric about i=0, and Neumann outer boundary
+ */
+void WENO_stg(real_t *f_in, real_t *f_stg)
+{
+    int i=0;
+
+    ALLOC_N( f, NN+4.0 )
+    f[0] = f_in[2];
+    f[1] = f_in[1];
+#pragma omp parallel for default(shared) private(i)
+    for(i=0; i<NN; i++)
+        f[i+2] = f_in[i];
+    f[NN+2] = f_in[NN-1];
+    f[NN+3] = f_in[NN-1];
+
+#pragma omp parallel for default(shared) private(i)
+    for(i=2; i<NN+2; i++)
+    {
+        real_t b1 = 13.0/12.0*std::pow(f[i-2] - 2*f[i-1] + f[i], 2)
+            + 1.0/4.0*std::pow(f[i-2] - 4*f[i-1] + 3*f[i], 2);
+        real_t b2 = 13.0/12.0*std::pow(f[i-1] - 2*f[i] + f[i+1], 2)
+            + 1.0/4.0*std::pow(f[i-1] - f[i+1], 2);
+        real_t b3 = 13.0/12.0*std::pow(f[i] - 2*f[i+1] + f[i+2], 2)
+            + 1.0/4.0*std::pow(3*f[i] - 4*f[i+1] - f[i+2], 2);
+        real_t eps = 1.0e-8;
+        real_t g1 = 0.1, g2 = 0.6, g3 = 0.3;
+        real_t wt1 = g1/std::pow(eps + b1, 2);
+        real_t wt2 = g2/std::pow(eps + b2, 2);
+        real_t wt3 = g3/std::pow(eps + b3, 2);
+        real_t wtsum = wt1 + wt2 + wt3;
+        real_t w1=wt1/wtsum, w2=wt2/wtsum, w3=wt3/wtsum;
+
+        real_t f1 = 1.0/3.0*f[i-2] - 7.0/6.0*f[i-1] + 11.0/6.0*f[i];
+        real_t f2 = -1.0/6.0*f[i-1] + 5.0/6.0*f[i] + 1.0/3.0*f[i+1];
+        real_t f3 = 1.0/3.0*f[i] + 5.0/6.0*f[i+1] - 1.0/6.0*f[i+2];
+
+        f_stg[i-2] = w1*f1 + w2*f2 + w3*f3;
+    }
+
+    free(f);
+}
+
+/**
+ * Weighted essentially non-oscilliatory derivative
+ * https://apps.dtic.mil/sti/tr/pdf/ADA390653.pdf
+ * 
+ * df/dA = (df/di)/(dA/di)
+ */
+void dfdA_WENO(real_t *f_in, real_t *A_in, real_t *dfdA)
+{
+    int i=0;
+
+    ALLOC_N( f_stg, NN )
+    WENO_stg( f_in, f_stg );
+
+    ALLOC_N( A_stg, NN )
+    WENO_stg( A_in, A_stg );
+
+#pragma omp parallel for default(shared) private(i)
+    for(i=1; i<NN; i++)
+    {
+        dfdA[i] = (f_stg[i]-f_stg[i-1])/(A_stg[i]-A_stg[i-1]);
+    }
+    dfdA[0] = 0;
+
+    free(f_stg);
+    free(A_stg);
+}
+
+/**
  * Compute dPtdAb
  * Uses a "staggered" grid to improve stability.
  * Assume dPtdAb is 0 at boundaries.
@@ -240,8 +330,58 @@ void dPtdAbstg(real_t *agg, real_t *dPtdAb, real_t rho_b)
     }
 
     dPtdAb[0] = 0;
-    dPtdAb[NN-1] = 0;
+    dPtdAb[NN-1] = dPtdAb[NN-2];
 }
+
+/**
+ * Compute dPtdAb using a WENO method.
+ */
+void dPtdAbstg_WENO(real_t *agg, real_t *dPtdAb, real_t rho_b)
+{
+    int i=0;
+
+    real_t *Ab = agg + 0;
+    real_t *rhot = agg + 7*NN;
+
+    ALLOC_N( Ab_stg, NN )
+    WENO_stg( Ab, Ab_stg );
+
+    ALLOC_N( rhot_stg, NN )
+    WENO_stg( rhot, rhot_stg );
+    
+    ALLOC_N( Pt_stg, NN )
+    for(i=0; i<NN; i++)
+        Pt_stg[i] = Pt_of_rhot(rhot_stg[i], rho_b);
+
+    for(i=1; i<NN; i++)
+        dPtdAb[i] = (Pt_stg[i] - Pt_stg[i-1])/(Ab_stg[i] - Ab_stg[i-1]);
+    dPtdAb[0] = 0;
+
+    free(Ab_stg);
+    free(rhot_stg);
+    free(Pt_stg);
+}
+
+/**
+ * Smooth a field using nearby WENO-weighted values
+ * assume an unchanged value at the origin
+ */
+void smooth(real_t *f)
+{
+    int i=0;
+
+    ALLOC_N( f_stg, NN )
+    WENO_stg( f, f_stg );
+
+#pragma omp parallel for default(shared) private(i)
+    for(i=1; i<NN; i++)
+    {
+        f[i] = (f_stg[i]+f_stg[i-1])/2.0;
+    }
+
+    free(f_stg);
+}
+
 
 /**
  * Populate the aggregate list of values ("agg"), structured as NFIELDS
@@ -249,6 +389,7 @@ void dPtdAbstg(real_t *agg, real_t *dPtdAb, real_t rho_b)
  * contain Abar, Rtilde, mtilde, Utilde, and populate the remaining
  * NFIELDS - 4 arrays (detailed in code below).
  */
+extern "C"
 void agg_pop(real_t * agg, real_t l)
 {
     int i=0;
@@ -273,8 +414,16 @@ void agg_pop(real_t * agg, real_t l)
     real_t *Qt     = agg + 12*NN;
 
     // Derivatives of R and m wrt. Ab, used later
-    dfdA(Rt, Ab, dRtdAb);
-    dfdA(mt, Ab, dmtdAb);
+    if(USE_WENO)
+    {
+        dfdA_WENO(Rt, Ab, dRtdAb);
+        dfdA_WENO(mt, Ab, dmtdAb);
+    }
+    else
+    {
+        dfdA(Rt, Ab, dRtdAb);
+        dfdA(mt, Ab, dmtdAb);
+    }
 
     // compute gamma and 2*m/R, used later
 #pragma omp parallel for default(shared) private(i)
@@ -285,29 +434,40 @@ void agg_pop(real_t * agg, real_t l)
         m2oR[i] = e2l*rho_b/RHO_B_I*AbRt2*mt[i];
     }
 
-
     // Compute density (rho tilde)
 #pragma omp parallel for default(shared) private(i)
     for(i=1; i<NN-1; i++)
     {
-        rhot[i] = mt[i] + Ab[i]*Rt[i]*(mt[i+1] - mt[i-1])
-                / 3 / (Ab[i+1]*Rt[i+1] - Ab[i-1]*Rt[i-1]);
+        rhot[i] = mt[i] + Ab[i]*Rt[i]/3
+                    *(mt[i+1] - mt[i-1]) / (Ab[i+1]*Rt[i+1] - Ab[i-1]*Rt[i-1]);
     }
     rhot[0] = mt[0];
     rhot[NN-1] = mt[NN-1] + Ab[NN-1]*Rt[NN-1]*(mt[NN-1] - mt[NN-2])
                 / 3 / (Ab[NN-1]*Rt[NN-1] - Ab[NN-2]*Rt[NN-2]);
-
+    if(SMOOTH_RHO)
+    {
+        smooth(rhot);
+    }
 
     // Compute pressure (P tilde)
 #pragma omp parallel for default(shared) private(i)
     for(i=0; i<NN; i++)
         Pt[i] = Pt_of_rhot(rhot[i], rho_b);
 
-    // Compute derivative of pressure, using staggered grid
-    dPtdAbstg(agg, dPtdAb, rho_b);
+    // Compute derivative of pressure
+    if(USE_WENO)
+    {
+        // This doesn't seem to work well...
+        // dPtdAbstg_WENO(agg, dPtdAb, rho_b);
+        dPtdAbstg(agg, dPtdAb, rho_b);
+    }
+    else
+    {
+        dPtdAbstg(agg, dPtdAb, rho_b);
+    }
 
     // Compute (artificial) viscosity
-    real_t kappa = 2.0;
+    real_t kappa = 4.0;
     if(kappa > 0)
     {
 #pragma omp parallel for default(shared) private(i)
@@ -413,6 +573,92 @@ void k_calc(real_t *agg, real_t *tmp_agg,
 }
 
 /**
+ * Change Abar coordinates
+ */
+extern "C"
+void regrid(real_t *agg, real_t nu)
+{
+    int i=0;
+
+    real_t *Ab = agg + 0;
+    real_t *Rt = agg + 1*NN;
+    real_t *mt = agg + 2*NN;
+    real_t *Ut = agg + 3*NN;
+    real_t *dmtdAbi = agg + 5*NN;
+    ALLOC(new_Ab)
+    ALLOC(dA)
+
+    // Want lots of resolution where mass changes rapidly
+    dfdA_WENO(mt, Ab, dmtdAbi);
+    smooth(dmtdAbi);
+#pragma omp parallel for default(shared) private(i)
+    for(i=1; i<NN; i++)
+    {
+        dA[i] = Ab[i]-Ab[i-1];
+        dmtdAbi[i] = 1.0/(std::abs(dmtdAbi[i])+1.0e-2);
+    }
+    dmtdAbi[0] = dmtdAbi[1];
+    dA[0] = 0;
+
+    // relax dA towards 1/dmtdAb
+    real_t max_dmtdAbi = max(dmtdAbi);
+    real_t max_dA = max(dA);
+#pragma omp parallel for default(shared) private(i)
+    for(i=1; i<NN; i++)
+        dA[i] = 0.03 + dA[i]/max_dA + nu*dmtdAbi[i]/max_dmtdAbi;
+    smooth(dA);
+
+    new_Ab[0] = 0;
+    for(i=1; i<NN; i++)
+        new_Ab[i] = new_Ab[i-1] + dA[i];
+
+    real_t max_Ab = max(Ab);
+    real_t max_new_Ab = max(new_Ab);
+#pragma omp parallel for default(shared) private(i)
+    for(i=1; i<NN; i++)
+        new_Ab[i] = new_Ab[i]*max_Ab/max_new_Ab;
+
+
+    // interpolate fields at new Ab points
+    std::vector<real_t> Ab_v ( NN+3.0 );
+    std::vector<real_t> Rt_v ( NN+3.0 );
+    std::vector<real_t> mt_v ( NN+3.0 );
+    std::vector<real_t> Ut_v ( NN+3.0 );
+#pragma omp parallel for default(shared) private(i)
+    for(i=0; i<NN; i++)
+    {
+        Ab_v[i+3] = Ab[i];
+        Rt_v[i+3] = Rt[i];
+        mt_v[i+3] = mt[i];
+        Ut_v[i+3] = Ut[i];
+    }
+#pragma omp parallel for default(shared) private(i)
+    for(i=0; i<3; i++)
+    {
+        Ab_v[i] = -Ab[3-i];
+        Rt_v[i] = Rt[3-i];
+        mt_v[i] = mt[3-i];
+        Ut_v[i] = Ut[3-i];
+    }
+
+    tk::spline RtofAb(Ab_v, Rt_v);
+    tk::spline mtofAb(Ab_v, mt_v);
+    tk::spline UtofAb(Ab_v, Ut_v);
+
+#pragma omp parallel for default(shared) private(i)
+    for(i=0; i<NN; i++)
+    {
+        Ab[i] = new_Ab[i];
+        Rt[i] = RtofAb(new_Ab[i]);
+        mt[i] = mtofAb(new_Ab[i]);
+        Ut[i] = UtofAb(new_Ab[i]);
+    }
+
+    free(new_Ab);
+    free(dA);
+}
+
+/**
  * Output agg array to a file
  */
 void write_output(real_t *agg, real_t l, std::ofstream & output)
@@ -426,17 +672,27 @@ void write_output(real_t *agg, real_t l, std::ofstream & output)
  * starting l, run for a number of steps, outputting per the interval.
  */
 extern "C"
-int run_sim(real_t *agg, real_t &l, int steps, int output_interval)
+int run_sim(real_t *agg, real_t &l, real_t &deltaH, int steps, int output_interval,
+    bool stop_on_horizon, real_t q_mult, bool smooth_rho, bool use_weno, real_t regrid_nu)
 {
+    // globals
+    SMOOTH_RHO = smooth_rho;
+    USE_WENO = use_weno;
+    // variables for interpolating delta @ horizon crossing
+    real_t rhot_horizon = 2.0, old_rhot_horizon = 2.0;
+    real_t delta_horizon = 0.0, old_delta_horizon = 0.0;
+    // return value flag
     int flag = 0;
 
     std::cout << "\n============\nRunning sim.\n============\n" << std::flush;
     std::cout << "\n";
     std::cout << "Using "<<steps<<" steps with "<<NN<<" gridpoints. Output every "
         <<output_interval<<" steps.\n";
+    std::cout << " USE_FIXW is "<<USE_FIXW<<", SMOOTH_RHO is "<<SMOOTH_RHO<<", USE_WENO is "
+        <<USE_WENO<<".\n";
     std::cout << "\n" << std::flush;
 
-    real_t *Abar      = agg + 0;
+    real_t *Ab        = agg + 0;
     real_t *Rt        = agg + 1*NN;
     real_t *mt        = agg + 2*NN;
     real_t *Ut        = agg + 3*NN;
@@ -455,7 +711,7 @@ int run_sim(real_t *agg, real_t &l, int steps, int output_interval)
     std::ofstream output;
     output.open("output.dat", std::ios::out | std::ios::binary | std::ios::trunc);
     int s=0;
-    real_t deltal = 3.67e-5;
+    real_t deltal = 3.67e-7;
     real_t max_rho0 = 0.0, prev_rho0 = 0.0, rho0 = 0.0;
     for(s=0; s<=steps; s++)
     {
@@ -497,7 +753,7 @@ int run_sim(real_t *agg, real_t &l, int steps, int output_interval)
             real_t tol_U = fabs(Ut[i])*TOL;
             if(tol_U > tol_U_max) { tol_U_max = tol_U; }
         }
-        
+
         // final field values at the end of the integration step.
         if(E_R_max < tol_R_max && E_m_max < tol_m_max && E_U_max < tol_U_max)
         {
@@ -516,26 +772,56 @@ int run_sim(real_t *agg, real_t &l, int steps, int output_interval)
         real_t q = -1.0;
         if(!(E_R_max == 0 || E_m_max == 0 || E_U_max == 0))
         {
-            q = 0.5*std::pow( std::min(tol_R_max/E_R_max,
+            q = q_mult*std::pow( std::min(tol_R_max/E_R_max,
                 std::min(tol_m_max/E_m_max, tol_U_max/E_U_max) ), 1.0/3.0);
-            q = std::min(q, (real_t) 2.0); // limit stepsize growth
+            q = std::min(q, (real_t) 1.5); // limit stepsize growth
             deltal *= q;
         }
 
+        // Flag when the density perturbation enters the cosmic horizon
+        // (linear) interpolation of delta in both time and space directions
+        real_t *Ab     = tmp_agg + 0;
+        real_t *Rt     = tmp_agg + 1*NN;
+        real_t *mt     = tmp_agg + 2*NN;
+        real_t *rhot = agg + 7*NN;
+        if(deltaH < 0)
+        {
+            real_t rho_b = rho_background(l);
+            real_t AbRt_horizon = std::exp(-l)*std::sqrt( RHO_B_I/rho_b );
 
-        // if(self.delta == -1):
-        //     r = self.rho(self.R, self.m)
-        //     pos = zero_crossing(self.Abar, (self.Abar - 1/np.exp((self.alpha-1) * self.xi) / self.R))
-        //     if(pos > 0 and np.interp(pos, self.Abar, r) < 1):
-        //         self.delta = np.interp(pos, self.Abar, self.m) - 1
+            for(i=0; i<NN - 1; i++)
+            {
+                real_t AbRt1 = Ab[i]*Rt[i];
+                real_t AbRt2 = Ab[i+1]*Rt[i+1];
+                bool at_horizon = AbRt1 < AbRt_horizon && AbRt2 > AbRt_horizon;
+
+                if( at_horizon )
+                {
+                    old_rhot_horizon = rhot_horizon;
+                    rhot_horizon = (AbRt_horizon - AbRt1)/(AbRt2 - AbRt1)*(rhot[i+1] - rhot[i]) + rhot[i];
+                    old_delta_horizon = delta_horizon;
+                    delta_horizon = (AbRt_horizon - AbRt1)/(AbRt2 - AbRt1)*(mt[i+1] - mt[i]) + mt[i] - 1;
+
+                    if(old_rhot_horizon >= 1 && rhot_horizon < 1)
+                    {
+                        deltaH = old_delta_horizon
+                            + (1.0 - old_rhot_horizon)/(rhot_horizon - old_rhot_horizon)*(delta_horizon - old_delta_horizon);
+                        std::cout << "Density perturbation at cosmological horizon crossing found: \n  deltaH=" << deltaH
+                            << " near l=" << l << ", rhot in (" << rhot_horizon << "," << old_rhot_horizon << "),"
+                            << " mt in (" << mt[i] << "," << mt[i+1] << "), AbRt in (" << AbRt1 << "," << AbRt2 << "), "
+                            << "and AbRt_horizon=" << AbRt_horizon << "\n";
+                    }
+                    break;
+                }
+            }
+        }
 
         // Check for diverging rho (singularity forming), or shrinking rho (homogenizing)
-        real_t *rhot = agg + 7*NN;
         prev_rho0 = rho0;
         rho0 = rhot[3];
         if(rho0 > max_rho0)
             max_rho0 = rho0;
-        if(rho0 > 1.0e10)
+        if(rho0 > 1.0e12)
         {
             // Assume singularity is forming
             flag = 1;
@@ -545,9 +831,23 @@ int run_sim(real_t *agg, real_t &l, int steps, int output_interval)
         if(rho0 < 0.25*max_rho0)
         {
             // Assume no BH is forming
-            flag = -1;
+            flag = 2;
             std::cout << "Density dropping substantially at step "<<s<<". q was "<<q<<"\n";
             break;
+        }
+        real_t *m2oR = agg + 11*NN;
+        if( stop_on_horizon )
+        {
+            for(i=0; i<NN-1; i++)
+            {
+                if(m2oR[i]>1 && m2oR[i+1]<1)
+                {
+                    flag = 3;
+                    std::cout << "Horizon formed at step "<<s<<". q was "<<q<<"\n";
+                    break;
+                }
+            }
+            if(flag == 3) break;
         }
 
         // Error checking
@@ -559,7 +859,7 @@ int run_sim(real_t *agg, real_t &l, int steps, int output_interval)
                     std::cout << "NaN detected.\n" << std::flush;
                 hasnan = true;
             }
-        if(deltal < 1.0e-11 || deltal > 1.0 || hasnan)
+        if(deltal < 1.0e-12 || deltal > 1.0 || hasnan)
         {
             std::cout << "Error at step "<<s<<". q was "<<q<<", l was "<<l<<"\n";
             std::cout << "Tolerances were "<<tol_R_max<<", "<<tol_m_max<<", "<<tol_U_max<<"\n";
@@ -567,7 +867,13 @@ int run_sim(real_t *agg, real_t &l, int steps, int output_interval)
             std::cout << "deltal was "<<deltal<<"\n";
             if(output_interval > 0)
                 write_output(agg, l, output);
+            flag = -1;
             break;
+        }
+
+        if(regrid_nu > 0)
+        {
+            regrid(agg, regrid_nu);
         }
 
     }
@@ -596,12 +902,16 @@ int run_sim(real_t *agg, real_t &l, int steps, int output_interval)
  * d is the perturbation size in horizon units.
  */
 extern "C"
-void ics(real_t *agg, real_t &l, real_t amp, real_t d, int n)
+void ics(real_t *agg, real_t &l, real_t &deltaH, real_t amp, real_t d, int n,
+    bool use_fixw)
 {
+    USE_FIXW = use_fixw;
+
     NN = n;
     l = 0;
+    deltaH = -1.0;
 
-    real_t *Abar      = agg + 0;
+    real_t *Ab      = agg + 0;
     real_t *Rt        = agg + 1*NN;
     real_t *mt        = agg + 2*NN;
     real_t *Ut        = agg + 3*NN;
@@ -610,7 +920,7 @@ void ics(real_t *agg, real_t &l, real_t amp, real_t d, int n)
     std::cout << "\n";
     std::cout << "Using "<<NN<<" gridpoints, amplitude "
                     <<amp<<", perturbation size "<<d<<".\n";
-    std::cout << "\n" << std::flush;
+    std::cout << std::flush;
 
 
     real_t rho_b = rho_background(l);
@@ -622,11 +932,11 @@ void ics(real_t *agg, real_t &l, real_t amp, real_t d, int n)
 #pragma omp parallel for default(shared) private(i)
     for(i=0; i<NN; i++)
     {
-        Abar[i] = i*L/NN;
-        real_t deltam0 = amp*std::exp(-Abar[i]*Abar[i]/2/d/d);
-        real_t deltam0P = -Abar[i]/d/d*deltam0;
+        Ab[i] = i*L/NN;
+        real_t deltam0 = amp*std::exp(-Ab[i]*Ab[i]/2/d/d);
+        real_t deltam0P = -Ab[i]/d/d*deltam0;
 
-        Rt[i] = 1 - alpha/2*(deltam0 + Abar[i]*deltam0P/6.0 );
+        Rt[i] = 1 - alpha/2*(deltam0 + Ab[i]*deltam0P/6.0 );
         mt[i] = 1 + deltam0;
         Ut[i] = 1 - alpha*deltam0/2;
     }
@@ -688,9 +998,10 @@ int main(int argc, char **argv)
 
     ALLOC_N(agg, NFIELDS*NN)
 
-    real_t l;
-    ics(agg, l, amp, d, NN);
-    run_sim(agg, l, steps, output_interval);
+    real_t l, deltaH;
+    ics(agg, l, deltaH, amp, d, NN, USE_FIXW);
+    run_sim(agg, l, deltaH, steps, output_interval, false, 0.25,
+        SMOOTH_RHO, USE_WENO, 0.0);
 
     free(agg);
 

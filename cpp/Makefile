@@ -43,4 +43,4 @@ all: $(OBJ)
 	$(CC) -c $< $(CC_OPTIMIZE) $(CC_OPTS)
 
 clean:
-	rm -f $(EXEC) $(OBJ)
+	rm -f $(EXEC) $(EXEC).so $(OBJ)
