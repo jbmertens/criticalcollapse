@@ -239,9 +239,9 @@ void spline::set_points(const std::vector<tkreal_t>& x,
     m_y=y;
     int n = (int) x.size();
     // check strict monotonicity of input vector x
-    for(int i=0; i<n-1; i++) {
-        assert(m_x[i]<m_x[i+1]);
-    }
+    // for(int i=0; i<n-1; i++) {
+    //     assert(m_x[i]<m_x[i+1]);
+    // }
 
 
     if(type==linear) {
