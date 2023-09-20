@@ -20,7 +20,7 @@ bool USE_WENO = true;
 bool SMOOTH_RHO = true;
 bool USE_FIXW = false;
 real_t FIXW = 1.0/3.0;
-real_t RHO_B_I = 1.0e25;
+real_t RHO_B_I = 1.0e27;
 
 #define ONLY_ALLOC_N(arr_n, ARR_SIZE) \
     arr_n = (real_t *) malloc( (ARR_SIZE) * ((long long) sizeof(real_t)));
@@ -64,7 +64,7 @@ real_t max(real_t *f)
     real_t fmax = f[0];
 #pragma omp parallel for reduction(max:fmax)
     for(int i=0; i<NN; i++)
-       fmax = fmax > f[i] ? fmax : f[i];
+        fmax = fmax > f[i] ? fmax : f[i];
     return fmax;
 }
 
@@ -115,10 +115,10 @@ public:
 
     tk::spline spl;
 
-    RhoBIntegrator(real_t RHO_B_I, real_t l)
+    RhoBIntegrator(real_t rho_b_i, real_t l)
     {
         ls.push_back(l);
-        logrho_of_ls.push_back(std::log(RHO_B_I));
+        logrho_of_ls.push_back(std::log(rho_b_i));
 
         while( logrho_of_ls.back() > -7 )
         {
@@ -168,6 +168,17 @@ real_t P_background(real_t l)
 
     real_t log_rho_b = logrhob_of_l.spl(l);
     return std::exp( logPoflogrho(log_rho_b) );
+}
+
+/**
+ * Linear growth function.
+ * \delta_m(l) = G(l) * \delta_{m,0}
+ */
+extern "C"
+real_t G(real_t l)
+{
+    real_t rho_b = rho_background(l);
+    return std::exp(-2.0*l)*RHO_B_I/rho_b;
 }
 
 /**
@@ -431,7 +442,7 @@ void dPtdAbstg_WENO(real_t *agg, real_t *dPtdAb, real_t rho_b)
  * Smooth a field using nearby WENO-weighted values
  * assume an unchanged value at the origin
  */
-void smooth(real_t *f)
+void ENOify(real_t *f)
 {
     int i=0;
 
@@ -447,6 +458,33 @@ void smooth(real_t *f)
     free(f_stg);
 }
 
+/**
+ * Smooth a field using nearby WENO-weighted values
+ * assume an unchanged value at the origin
+ */
+void smooth(real_t *f)
+{
+    int i=0;
+
+    ALLOC( f_new )
+
+#pragma omp parallel for default(shared) private(i)
+    for(i=2; i<NN-2; i++)
+        f_new[i] = (f[i-2]+4*f[i-1]+6*f[i]+4*f[i+1]+f[i+2])/16.0;
+    f_new[0] = (6*f[0]+4*f[1]+f[2])/11.0;
+    f_new[NN-1] = (f[NN-3]+4*f[NN-2]+6*f[NN-1])/11.0;
+    f_new[1] = (4*f[0]+6*f[1]+4*f[2]+f[3])/15.0;
+    f_new[NN-2] = (f[NN-4]+4*f[NN-3]+6*f[NN-2]+4*f[NN-1])/15.0;
+    
+    // ENOify(f_new);
+
+#pragma omp parallel for default(shared) private(i)
+    for(i=0; i<NN; i++)
+        f[i] = f_new[i];
+
+    free(f_new);
+}
+
 
 /**
  * Populate the aggregate list of values ("agg"), structured as NFIELDS
@@ -459,24 +497,26 @@ void agg_pop(real_t * agg, real_t l)
 {
     int i=0;
     real_t e2l = std::exp(2*l);
+    real_t G_l = G(l);
     real_t rho_b = rho_background(l);
+    real_t P_b = P_background(l);
 
     // Populate all information; stored in "agg"regate array
     // Ab, Rt, mt, Ut are expected to be filled already.
-    real_t *Ab     = agg + 0;
-    real_t *Rt     = agg + 1*NN;
-    real_t *mt     = agg + 2*NN;
-    real_t *Ut     = agg + 3*NN;
+    real_t *Ab      = agg + 0;
+    real_t *Rt      = agg + 1*NN;
+    real_t *mt      = agg + 2*NN;
+    real_t *Ut      = agg + 3*NN;
     // The remainder are computed.
-    real_t *dRtdAb = agg + 4*NN;
-    real_t *dmtdAb = agg + 5*NN;
-    real_t *gammab = agg + 6*NN;
-    real_t *rhot   = agg + 7*NN;
-    real_t *Pt     = agg + 8*NN;
-    real_t *dPtdAb = agg + 9*NN;
-    real_t *phi    = agg + 10*NN;
-    real_t *m2oR   = agg + 11*NN;
-    real_t *Qt     = agg + 12*NN;
+    real_t *dRtdAb  = agg + 4*NN;
+    real_t *dmtdAb  = agg + 5*NN;
+    real_t *gammab2 = agg + 6*NN;
+    real_t *rhot    = agg + 7*NN;
+    real_t *Pt      = agg + 8*NN;
+    real_t *dPtdAb  = agg + 9*NN;
+    real_t *phi     = agg + 10*NN;
+    real_t *m2oR    = agg + 11*NN;
+    real_t *Qt      = agg + 12*NN;
 
     // Derivatives of R and m wrt. Ab, used later
     if(USE_WENO)
@@ -489,18 +529,14 @@ void agg_pop(real_t * agg, real_t l)
         dfdA(Rt, Ab, dRtdAb);
         dfdA(mt, Ab, dmtdAb);
     }
-    if(SMOOTH_RHO)
-    {
-        smooth(mt);
-    }
 
     // compute gamma and 2*m/R, used later
 #pragma omp parallel for default(shared) private(i)
     for(i=0; i<NN; i++)
     {
         real_t AbRt2 = Ab[i]*Rt[i]*Ab[i]*Rt[i];
-        gammab[i] = std::sqrt( RHO_B_I/rho_b/e2l + AbRt2*(Ut[i]*Ut[i] - mt[i]) );
-        m2oR[i] = e2l*rho_b/RHO_B_I*AbRt2*mt[i];
+        gammab2[i] = G_l + AbRt2*(Ut[i]*Ut[i] - mt[i]);
+        m2oR[i] = 1.0/G_l*AbRt2*mt[i];
     }
 
     // Compute density (rho tilde)
@@ -523,6 +559,33 @@ void agg_pop(real_t * agg, real_t l)
     for(i=0; i<NN; i++)
         Pt[i] = Pt_of_rhot(rhot[i], rho_b);
 
+    // Compute (artificial) viscosity
+    real_t kappa = 2.0;
+    if(kappa > 0)
+    {
+#pragma omp parallel for default(shared) private(i)
+        for(i=1; i<NN-1; i++)
+        {
+            real_t d2Ab = Ab[i+1] - Ab[i-1];
+            real_t Utp = (Ut[i+1] - Ut[i-1]) / d2Ab;
+            real_t AbRtp = (Ab[i+1]*Rt[i+1] - Ab[i-1]*Rt[i-1]) / d2Ab;
+            real_t AbRtUtp = (Ab[i+1]*Rt[i+1]*Ut[i+1] - Ab[i-1]*Rt[i-1]*Ut[i-1]) / d2Ab;
+            if(AbRtp*Ut[i] < -Ab[i]*Rt[i]*Utp)
+                Qt[i] = kappa*(d2Ab/2)*(d2Ab/2)/e2l*AbRtUtp*AbRtUtp;
+            else
+                Qt[i] = 0;
+        }
+        Qt[0] = Qt[1];
+        Qt[NN-1] = Qt[NN-2];
+
+        // Smooth the viscosity curve a bit
+        smooth(Qt);
+
+#pragma omp parallel for default(shared) private(i)
+        for(i=0; i<NN; i++)
+            Pt[i] += Qt[i];
+    }
+
     // Compute derivative of pressure
     if(USE_WENO)
     {
@@ -535,42 +598,12 @@ void agg_pop(real_t * agg, real_t l)
         dPtdAbstg(agg, dPtdAb, rho_b);
     }
 
-    // Compute (artificial) viscosity
-    real_t kappa = 1.0;
-    if(kappa > 0)
-    {
-#pragma omp parallel for default(shared) private(i)
-        for(i=1; i<NN-1; i++)
-        {
-            real_t d2Ab = Ab[i+1] - Ab[i-1];
-            real_t Utp = (Ut[i+1] - Ut[i-1]) / d2Ab;
-            real_t AbRtp = (Ab[i+1]*Rt[i+1] - Ab[i-1]*Rt[i-1]) / d2Ab;
-            real_t AbRtUtp = (Ab[i+1]*Rt[i+1]*Ut[i+1] - Ab[i-1]*Rt[i-1]*Ut[i-1]) / d2Ab;
-            if(AbRtp*Ut[i] < -Ab[i]*Rt[i]*Utp)
-                Qt[i] = kappa*(d2Ab/2)/e2l*AbRtUtp*AbRtUtp;
-            else
-                Qt[i] = 0;
-        }
-        Qt[0] = Qt[1];
-        Qt[NN-1] = Qt[NN-2];
-
-        // Smooth the viscosity curve a bit
-        Qt[0] = (4*Qt[0] + 3*Qt[1] + 2*Qt[2] + Qt[3])/10.0;
-        Qt[1] = (3*Qt[0] + 4*Qt[1] + 3*Qt[2] + 2*Qt[3] + Qt[4])/13.0;
-        Qt[2] = (2*Qt[0] + 3*Qt[1] + 4*Qt[2] + 3*Qt[3] + 2*Qt[4] + Qt[5])/15.0;
-        for(i=3; i<NN-3; i++)
-            Qt[i] = (Qt[i-3]+2*Qt[i-2]+3*Qt[i-1]+4*Qt[i]+3*Qt[i+1]+2*Qt[i+2]+1*Qt[i+3])/16.0;
-
-#pragma omp parallel for default(shared) private(i)
-        for(i=0; i<NN; i++)
-            Pt[i] += Qt[i];
-    }
-
     // Perform integration to compute metric (phi). The boundary value can be
     // chosen; shifting it by a constant amounts to re-scaling the time
     // coordinate. We use Eq. 51, Assuming radiation-dominated cosmology values
     // for the equation of state. Close to zero works, anyways.
-    phi[NN-1] = -std::log(rhot[NN-1])/2.0;
+    // phi[NN-1] = -std::log(rhot[NN-1])/2.0;
+    phi[NN-1] = -std::log( (1 + Pt[NN-1]) / (1 + P_b/rho_b) );
     phi[NN-2] = phi[NN-1] + (Pt[NN-1] - Pt[NN-2])*2.0/(Pt[NN-2] + Pt[NN-1] + rhot[NN-2] + rhot[NN-1]);
     for(i=NN-3; i>=0; i--)
         phi[i] = (Pt[i+2] - Pt[i])/(Pt[i+1] + rhot[i+1]) + phi[i+2];
@@ -597,18 +630,18 @@ void k_calc(real_t *agg, kCoefficientData *ks,  real_t l_in, real_t deltal, real
     }
     agg_pop(ks->agg_f, l);
 
-    real_t *Ab     = ks->agg_f + 0;
-    real_t *Rt     = ks->agg_f + 1*NN;
-    real_t *mt     = ks->agg_f + 2*NN;
-    real_t *Ut     = ks->agg_f + 3*NN;
-    real_t *dRtdAb = ks->agg_f + 4*NN;
-    real_t *dmtdAb = ks->agg_f + 5*NN;
-    real_t *gammab = ks->agg_f + 6*NN;
-    real_t *rhot   = ks->agg_f + 7*NN;
-    real_t *Pt     = ks->agg_f + 8*NN;
-    real_t *dPtdAb = ks->agg_f + 9*NN;
-    real_t *phi    = ks->agg_f + 10*NN;
-    real_t *Qt     = ks->agg_f + 12*NN;
+    real_t *Ab      = ks->agg_f + 0;
+    real_t *Rt      = ks->agg_f + 1*NN;
+    real_t *mt      = ks->agg_f + 2*NN;
+    real_t *Ut      = ks->agg_f + 3*NN;
+    real_t *dRtdAb  = ks->agg_f + 4*NN;
+    real_t *dmtdAb  = ks->agg_f + 5*NN;
+    real_t *gammab2 = ks->agg_f + 6*NN;
+    real_t *rhot    = ks->agg_f + 7*NN;
+    real_t *Pt      = ks->agg_f + 8*NN;
+    real_t *dPtdAb  = ks->agg_f + 9*NN;
+    real_t *phi     = ks->agg_f + 10*NN;
+    real_t *Qt      = ks->agg_f + 12*NN;
 
     real_t rho_b = rho_background(l);
     real_t alpha = 2.0/3.0*rho_b/( rho_b + P_background(l) );
@@ -631,11 +664,10 @@ void k_calc(real_t *agg, kCoefficientData *ks,  real_t l_in, real_t deltal, real
         kR_f[i] = deltal*Rt[i]*(Ut[i]*ep - 1);
         km_f[i] = deltal*(2.0/alpha*mt[i] - 3*Ut[i]*ep*(Pt[i] + mt[i]));
         kU_f[i] = deltal*(Ut[i]/alpha - ep*(
-            gammab[i]*gammab[i]*dPtdAboAb / (Rt[i]*AbRt_prime*(rhot[i] + Pt[i]))
+            gammab2[i]*dPtdAboAb / (Rt[i]*AbRt_prime*(rhot[i] + Pt[i]))
             + (2*Ut[i]*Ut[i] + mt[i] + 3*Pt[i])/2.0
         ));
     }
-
 }
 
 /**
@@ -754,11 +786,11 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0,
     // reusable iterator
     int i = 0;
 
-    std::cout << "\n============\nRunning sim.\n============\n" << std::flush;
+    std::cout << "\n============\nRunning sim.\n" << std::flush;
     std::cout << "\n";
     std::cout << "Using "<<steps<<" steps with "<<NN<<" gridpoints. Output every "
         <<output_interval<<" steps.\n";
-    std::cout << " USE_FIXW is "<<USE_FIXW<<", SMOOTH_RHO is "<<SMOOTH_RHO<<", USE_WENO is "
+    std::cout << " USE_FIXW is "<<USE_FIXW<<" ("<<FIXW<<"), SMOOTH_RHO is "<<SMOOTH_RHO<<", USE_WENO is "
         <<USE_WENO<<".\n";
     std::cout << "\n" << std::flush;
 
@@ -779,8 +811,9 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0,
     // main integration loop
     std::ofstream output;
     output.open("output.dat", std::ios::out | std::ios::binary | std::ios::trunc);
-    int s=0;
-    real_t deltal = 1.5e-3;
+    int s = 0, isteps = 0;
+    real_t deltal = 1.5e-4, q = -1.0;
+    real_t rel_TE_max = 0.0;
     real_t prev_rho0 = 0.0, rho0 = 0.0;
     for(s=0; s<=steps; s++)
     {
@@ -803,16 +836,22 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0,
         // RKF(4,5) method https://en.wikipedia.org/wiki/Runge%E2%80%93Kutta%E2%80%93Fehlberg_method
         k_calc(agg, &ks,  l, deltal, 0,
             ks.kR1, ks.km1, ks.kU1, 0, 0, 0, 0, 0);  // Compute k1 coefficients
+        for(i=0; i<13*NN; i++) { if(std::isnan(ks.agg_f[i])) { std::cout << "k1 nan at " << i << ", " << s << "\n"; return -1; } }
         k_calc(agg, &ks,  l, deltal, 2.0/9.0,
             ks.kR2, ks.km2, ks.kU2, 2.0/9.0, 0, 0, 0, 0);  // Compute k2 coefficients
+        for(i=0; i<13*NN; i++) { if(std::isnan(ks.agg_f[i])) { std::cout << "k2 nan at " << i << ", " << s << "\n"; return -1; } }
         k_calc(agg, &ks,  l, deltal, 1.0/3.0,
             ks.kR3, ks.km3, ks.kU3, 1.0/12.0, 1.0/4.0, 0, 0, 0);  // Compute k3 coefficients
+        for(i=0; i<13*NN; i++) { if(std::isnan(ks.agg_f[i])) { std::cout << "k3 nan at " << i << ", " << s << "\n"; return -1; } }
         k_calc(agg, &ks,  l, deltal, 3.0/4.0,
             ks.kR4, ks.km4, ks.kU4, 69.0/128.0, -243.0/128.0, 135.0/64.0, 0, 0);  // Compute k4 coefficients
+        for(i=0; i<13*NN; i++) { if(std::isnan(ks.agg_f[i])) { std::cout << "k4 nan at " << i << ", " << s << "\n"; return -1; } }
         k_calc(agg, &ks,  l, deltal, 1.0,
             ks.kR5, ks.km5, ks.kU5, -17.0/12.0, 27.0/4.0, -27.0/5.0, 16.0/15.0, 0);  // Compute k5 coefficients
+        for(i=0; i<13*NN; i++) { if(std::isnan(ks.agg_f[i])) { std::cout << "k5 nan at " << i << ", " << s << "\n"; return -1; } }
         k_calc(agg, &ks,  l, deltal, 5.0/6.0,
             ks.kR6, ks.km6, ks.kU6, 65.0/432.0, -5.0/16.0, 13.0/16.0, 4.0/27.0, 5.0/144.0);  // Compute k6 coefficients
+        for(i=0; i<13*NN; i++) { if(std::isnan(ks.agg_f[i])) { std::cout << "k6 nan at " << i << ", " << s << "\n"; return -1; } }
 
         // Truncation error estimate
 #pragma omp parallel for default(shared) private(i)
@@ -825,8 +864,8 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0,
         real_t TER_max = max(TER), TEm_max = max(TEm), TEU_max = max(TEU);
         real_t TE_max = std::max( TER_max, std::max( TEm_max, TEU_max ) );
 
-        real_t R_mean_L1 = mean_L1(Rt), m_mean_L1 = mean_L1(mt), U_mean_L1 = mean_L1(Ut);
-        real_t rel_TE_max = std::max( TER_max/R_mean_L1, std::max( TEm_max/m_mean_L1, TEU_max/U_mean_L1 ) );
+        real_t R_mean_L1 = mean_L1(Rt)+1.0e-15, m_mean_L1 = mean_L1(mt)+1.0e-15, U_mean_L1 = mean_L1(Ut)+1.0e-15;
+        rel_TE_max = std::max( TER_max/R_mean_L1, std::max( TEm_max/m_mean_L1, TEU_max/U_mean_L1 ) );
 
         if(rel_TE_max < TOL)
         {
@@ -839,10 +878,11 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0,
                 Ut[i] = Ut[i] + 47.0/450.0*ks.kU1[i] + 12.0/25.0*ks.kU3[i] + 32.0/225.0*ks.kU4[i] + 1.0/30.0*ks.kU5[i] + 6.0/25.0*ks.kU6[i];
             }
             l = l + deltal;
+            isteps++;
         }
         agg_pop(agg, l);
 
-        real_t q = -1.0;
+        q = -1.0;
         if(rel_TE_max > 0)
         {
             q = q_mult*std::pow(TOL/rel_TE_max, 1.0/5.0);
@@ -850,15 +890,16 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0,
             deltal *= q;
         }
         
-        real_t *dRtdAb = agg + 4*NN;
-        real_t *gammab = agg + 6*NN;
-        real_t *phi    = agg + 10*NN;
+        real_t *dRtdAb  = agg + 4*NN;
+        real_t *gammab2 = agg + 6*NN;
+        real_t *phi     = agg + 10*NN;
 #pragma omp parallel for default(shared) private(i)
         for(i=1; i<NN; i++)
         {
             real_t dA = Ab[i] - Ab[i-1];
             real_t emp = std::exp(-phi[i]);
-            real_t fac = (Rt[i]+Ab[i]*dRtdAb[i])/gammab[i];
+            real_t gammab = gammab2[i] < 0 ? 1.0e-12 : std::sqrt(gammab2[i]);
+            real_t fac = std::fabs((Rt[i]+Ab[i]*dRtdAb[i])/gammab);
 
             // numerical factor 5 is just for QCD.
             // Happens to satisfy inequality. Could do better, would need to for w=0.
@@ -875,7 +916,7 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0,
         if(deltaH < 0)
         {
             real_t rho_b = rho_background(l);
-            real_t AbRt_horizon = std::exp(-l)*std::sqrt( RHO_B_I/rho_b );
+            real_t AbRt_horizon = std::sqrt( G(l) );
 
             for(i=0; i<NN - 1; i++)
             {
@@ -897,7 +938,7 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0,
                         std::cout << "Density perturbation at cosmological horizon crossing found: \n  deltaH=" << deltaH
                             << " near l=" << l << ", rhot in (" << rhot_horizon << "," << old_rhot_horizon << "),"
                             << " mt in (" << mt[i] << "," << mt[i+1] << "), AbRt in (" << AbRt1 << "," << AbRt2 << "), "
-                            << "and AbRt_horizon=" << AbRt_horizon << "\n";
+                            << "and AbRt_horizon=" << AbRt_horizon << " at step "<<s<<"\n";
                     }
                     break;
                 }
@@ -941,13 +982,33 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0,
         // Error checking
         bool hasnan = false;
         for(i=0; i<NN; i++)
-            if(std::isnan(Rt[i]) || std::fabs(Rt[i]) > 1.0e10)
+        {
+            if(std::isnan(Rt[i]))
             {
                 if(hasnan == false)
-                    std::cout << "NaN detected.\n" << std::flush;
+                    std::cout << "Rt NaN detected.\n" << std::flush;
                 hasnan = true;
             }
-        if(deltal < 1.0e-12 || deltal > 1.0 || hasnan)
+            if(std::isnan(mt[i]))
+            {
+                if(hasnan == false)
+                    std::cout << "mt NaN detected.\n" << std::flush;
+                hasnan = true;
+            }
+            if(std::isnan(Ut[i]))
+            {
+                if(hasnan == false)
+                    std::cout << "Ut NaN detected.\n" << std::flush;
+                hasnan = true;
+            }
+            if(std::fabs(Rt[i]) > 1.0e12)
+            {
+                if(hasnan == false)
+                    std::cout << "Diverging Rt detected.\n" << std::flush;
+                hasnan = true;
+            }
+        }
+        if(deltal < 1.0e-11 || deltal > 1.0 || hasnan || rel_TE_max <= 0 || std::isnan(rel_TE_max))
         {
             std::cout << "Error at step "<<s<<". q="<<q<<", l="<<l<<", hasnan="<<hasnan<<".\n";
             std::cout << "  L1 vals were:  "<<R_mean_L1<<", "<<m_mean_L1<<", "<<U_mean_L1<<"\n";
@@ -966,9 +1027,9 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0,
 
     }
 
-    std::cout << "\nFinal log(a) after step "<<s<<" was "<< l <<", delta log(a) was "<<deltal<<".\n";
-    std::cout << "  max_rho0 was "<<max_rho0<<".\n";
-    std::cout << "\n============\nDone running.\n============\n";
+    std::cout << "\nFinal log(a) after step "<<s<<" (isteps="<<isteps<<") was "<< l <<", delta log(a) was "<<deltal<<" (q="<<q<<").\n";
+    std::cout << "  max_rho0 was "<<max_rho0<<", rel_TE_max was "<<rel_TE_max<<".\n";
+    std::cout << "\nDone running.\n=============\n";
 
     output.close();
 
@@ -991,18 +1052,21 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0,
  * d is the perturbation size in horizon units.
  */
 extern "C"
-void ics(real_t *agg, real_t &l, real_t &deltaH, real_t amp, real_t d, int n,
-    bool use_fixw)
+void ics(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0,
+    real_t amp, real_t d, int n, real_t Ld, bool use_fixw)
 {
-    USE_FIXW = use_fixw;
-
     NN = n;
     deltaH = -1.0;
+    max_rho0 = 0.0;
+
+    USE_FIXW = false;
     real_t rho_b = rho_background(l);
     real_t P_b = P_background(l);
-    real_t FIXW = P_b/rho_b;
+    FIXW = dPdrho(rho_b);
+    USE_FIXW = use_fixw;
+
     real_t alpha = 2.0/3.0*rho_b/( rho_b + P_b ); // Eq. 36, generalized
-    real_t L = 15.0*d; // Simulation size
+    real_t L = Ld*d; // Simulation size
 
     real_t *Ab = agg + 0;
     real_t *Rt = agg + 1*NN;
@@ -1014,7 +1078,6 @@ void ics(real_t *agg, real_t &l, real_t &deltaH, real_t amp, real_t d, int n,
     std::cout << "Using "<<NN<<" gridpoints, amplitude "
                     <<amp<<", perturbation size "<<d<<", alpha = "<<alpha<<".\n";
     std::cout << std::flush;
-
 
     int i=0;
 #pragma omp parallel for default(shared) private(i)
@@ -1028,6 +1091,8 @@ void ics(real_t *agg, real_t &l, real_t &deltaH, real_t amp, real_t d, int n,
         mt[i] = 1 + deltam0;
         Ut[i] = 1 - alpha*deltam0/2;
     }
+
+    agg_pop(agg, l);
 }
 
 
@@ -1086,8 +1151,8 @@ int main(int argc, char **argv)
 
     ALLOC_N(agg, NFIELDS*NN)
 
-    real_t l=0, deltaH, max_rho0=0.0;
-    ics(agg, l, deltaH, amp, d, NN, USE_FIXW);
+    real_t l=0, deltaH, max_rho0;
+    ics(agg, l, deltaH, max_rho0, amp, d, NN, 20.0, USE_FIXW);
     run_sim(agg, l, deltaH, max_rho0, steps, output_interval, false, 0.25,
         SMOOTH_RHO, USE_WENO, 0, 0.0, 0.0, 1.0e-7);
 

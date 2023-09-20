@@ -1,14 +1,20 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-import numpy as np
 import sys
 from importlib import reload 
 import scipy.interpolate as interp
 import scipy.constants as const
+from scipy import stats
+import subprocess
+import numpy as np
+import scipy.optimize as opt
 
-import cython
-get_ipython().run_line_magic('load_ext', 'Cython')
+import ctypes
+c_lib = ctypes.CDLL('cpp/ms.so')
+c_real_t = ctypes.c_double
+c_bool_t = ctypes.c_bool
+c_real_ptr_t = ctypes.POINTER(c_real_t)
 
 import matplotlib.pyplot as plt
 import matplotlib as mpl
@@ -18,102 +24,102 @@ mpl.rc('xtick.minor', visible=True)
 mpl.rc('ytick.minor', visible=True)
 
 
-# importing MS and HM modules. Reload modules if needed
-try :
-    reload(ms_hm)
-    reload(ms_hm.QCD_EOS)
-    reload(ms_hm.MS)
-    reload(ms_hm.HM)
-    reload(ms_hm.timer)
-except :
-    print("Did not reload modules, they may not have been imported yet.")
+c_lib.P_of_rho.restype = c_real_t
+c_lib.P_of_rho.argtypes = [c_real_t]
+c_lib.dPdrho.restype = c_real_t
+c_lib.dPdrho.argtypes = [c_real_t]
 
-import ms_hm
-from ms_hm.QCD_EOS import *
-from ms_hm.MS import *
-from ms_hm.HM import *
-from ms_hm.timer import *
+c_lib.rho_background.restype = c_real_t
+c_lib.rho_background.argtypes = [c_real_t]
+c_lib.P_background.restype = c_real_t
+c_lib.P_background.argtypes = [c_real_t]
+
+c_lib.G.restype = c_real_t
+c_lib.G.argtypes = [c_real_t]
 
 
-# ## Various functions that use the MS and HM classes
-# 
-# Functions below compute various things using the Misner-Sharp or Hernandez-Misher classes.
+c_lib.ics.argtypes = [ c_real_ptr_t, c_real_ptr_t, c_real_ptr_t,
+    c_real_ptr_t, c_real_t, c_real_t, ctypes.c_int, c_real_t, c_bool_t ]
+c_lib.ics.restype = None
+
+c_lib.run_sim.argtypes = [ c_real_ptr_t, c_real_ptr_t, c_real_ptr_t, c_real_ptr_t,
+                          ctypes.c_int, ctypes.c_int,
+                          c_bool_t, c_real_t, c_bool_t, c_bool_t,
+                          ctypes.c_int, c_real_t, c_real_t, c_real_t]
+c_lib.run_sim.restype = ctypes.c_int
+
+c_lib.regrid.argtypes = [ c_real_ptr_t, c_real_t, c_real_t ]
+c_lib.regrid.restype = None
+c_lib.agg_pop.argtypes = [ c_real_ptr_t, c_real_t ]
+c_lib.agg_pop.restype = None
 
 
-get_ipython().run_cell_magic('cython', '', '\nimport cython\ncimport numpy as np\n\ncimport cython\nctypedef np.double_t DTYPE_t\n\nfrom libc.math cimport exp\nfrom libc.math cimport sqrt\n\nfrom cython.parallel import prange\n\n@cython.boundscheck(False)  # Deactivate bounds checking\ncpdef zero_crossing(np.ndarray x_in, double [::1] y):\n    """\n    Given an array of inputs y, find x where the function y(x) = 0\n    """\n    cdef int size = x_in.shape[0]\n    cdef double [:] x = x_in\n    cdef double w, zero=-1\n    cdef int i\n    \n    for i in range(size-1): # loop through all y values\n        if(y[i] * y[i+1] < 0): # if subsequent elements have opposite signs, a zero-crossing was found.\n            # linearly extrapolate zero-crossing\n            w = abs(y[i] / (y[i+1] - y[i])) \n            zero = x[i] * (1 - w) + x[i+1] * w\n            break\n            \n    return zero')
+def min_gammab2(amp, l_simstart, l_simeq, USE_FIXW=False, Ld=30, N=3200) :
+    max_rho0 = c_real_t(0)
+    deltaH = c_real_t(-2)
+    agg = (c_real_t*(N*13))()
+    l = c_real_t(l_simstart)
+    c_lib.ics(agg, ctypes.byref(l), ctypes.byref(deltaH), ctypes.byref(max_rho0),
+              amp*c_lib.G(l_simstart)/c_lib.G(l_simeq), # Amplitude scaled down by the relative growth factor
+              np.exp(l_simeq), # Abar scale set by the equality factor
+              N, Ld, USE_FIXW)
+    agg = np.reshape(np.copy(agg), (13, N))
+    gammab2 = agg[6];
+    return np.min(gammab2)
+
+def max_phys_amp(l_simstart, l_simeq, USE_FIXW=False, Ld=30, N=3200) :
+    return opt.root( min_gammab2, 0.5, (l_simstart, l_simeq, USE_FIXW, Ld, N) ).x[0]
 
 
-def mix_grid(left, right, n):
-    """
-    Function to generate coordinate spacings with a mix of uniform and logarithmic spacings,
-    with uniform spacing at small values (0 to "left") then logarithmically spaced ("left" to "right").
-    
-    Returns an array of coordinate positions.
-    """
-    
-    # Generate logarithmically spaced coordinates between "left" and "right"
-    A = np.exp(np.linspace(left, right, n))
-    dA = A[1] - A[0]
-    
-    # Generate uniformly spaced coordinates
-    A = np.concatenate( (np.linspace(0, A[0], int(np.ceil(A[0] / dA)), endpoint=False), A))
-    
-    return A
-
-def uni_grid(right, n):
-    """
-    Function to generate a uniformly-spaced array of coordinate positions
-    
-    Returns the array of uniformly spaced coordinates.
-    """
-    A = np.linspace(0, np.exp(right), n)
-    return A
-
-def exp_grid(left, right, n):
-    """
-    Function to generate an exponentially-spaced array of coordinate positions
-    """
-    # Generate logarithmically spaced coordinates between "left" and "right"
-    A = np.logspace(left, right, n)
-    A = np.concatenate( ([0], A))
-
-    return A
-
-
-# Check if a BH forms
-# The MS run should proceed until MS until it breaks. If 2m / R > 1, return true
-def BH_form(Abar, rho0, amp, default_steps=1500000, sm_sigma=0.0, fixw=False):
-    
-    ms = MS(Abar, rho0, amp, trace_ray=False, BH_threshold=-1,
-        sm_sigma=sm_sigma, fixw=fixw)
-    
-    run_result = ms.adap_run_steps(default_steps)
-    if run_result == -1 :
-        return (True, run_result, ms.delta, ms)
-    
-    return (False, run_result, ms.delta, ms)
-
-
-def find_crit(Abar, rho0, lower_amp, upper_amp,
-    sm_sigma=0.0, fixw=False):
+def find_crit(iters=12,
+    l_simstart=0,
+    l_simeq=0,
+    lower_amp=-1,
+    upper_amp=-1,
+    steps=100000,
+    N=800,
+    Ld=32.0,
+    USE_FIXW=False,
+    q_mult=0.25,
+    TOL=1.0e-7
+):
     """
     Binary search between lower and upper to find a critical amplitude
     (Note that this is NOT the critical density)
     return (critical, upper value)
     """
-    upper_ms = -1
-    lower_ms = -1
+    if lower_amp < 0 :
+        lower_amp = 0.2*max_phys_amp(l_simstart, l_simeq, USE_FIXW, Ld, N)
+    if upper_amp < 0 :
+        upper_amp = 0.9*max_phys_amp(l_simstart, l_simeq, USE_FIXW, Ld, N)
+    upper_fields = -1
+    lower_fields = -1
     bisection_factor = 1/2
-    for i in range(20):
+    for i in range(iters):
         try :
             amp_diff = upper_amp - lower_amp
             middle_amp = upper_amp - amp_diff*bisection_factor
             print('Iteration No', str(i), '-- Checking to see if a BH forms at amplitude', str(middle_amp),
-                ' (bracket is ', lower_amp, '/', upper_amp, ')')
+                ' ( bracket is ', lower_amp, '/', upper_amp, ')')
 
-            forms, result, delta, ms = BH_form(Abar, rho0, middle_amp, sm_sigma=sm_sigma, fixw=fixw)
+            deltaH = c_real_t(-2)
+            max_rho0 = c_real_t(0)
+            agg = (c_real_t*(N*13))()
+            l = c_real_t(l_simstart)
+           
+            c_lib.ics(agg, ctypes.byref(l), ctypes.byref(deltaH), ctypes.byref(max_rho0),
+                      middle_amp*c_lib.G(l_simstart)/c_lib.G(l_simeq), np.exp(l_simeq), N, Ld, USE_FIXW)
 
-            if result > 0 : # Some sort of error during run
+            result = c_lib.run_sim(agg, ctypes.byref(l), ctypes.byref(deltaH), ctypes.byref(max_rho0),
+                                steps, -1, True, q_mult, True, True, -400, 1.0, 0.001, TOL)
+            print(result, l, c_lib.G(l_simstart)/c_lib.G(l_simeq), deltaH, max_rho0)
+            
+            fields = np.reshape(np.copy(agg), (13, N))
+
+            if result == 0 : # Ran out of steps
+                print("Ran out of steps. Breaking.")
+                break
+            elif result <= 1 : # Some sort of error during run
                 print("Encountered error during run. Trying again with a different amplitude.")
                 # change bisection factor (don't divide just in half; walk in by 1/4, 1/8, ... from the ends.)
                 if bisection_factor >= 1/2 :
@@ -122,12 +128,12 @@ def find_crit(Abar, rho0, lower_amp, upper_amp,
                     bisection_factor = 1-bisection_factor
             else :
                 bisection_factor = 1/2
-                if(forms == True):
+                if(result == 3):
                     upper_amp = middle_amp
-                    upper_ms = ms
-                else:
+                    upper_fields = fields
+                elif(result == 2):
                     lower_amp = middle_amp
-                    lower_ms = ms
+                    lower_fields = fields
 
         except Exception as e :
             print("Run failed! Stopping search. Reason below.")
@@ -136,101 +142,22 @@ def find_crit(Abar, rho0, lower_amp, upper_amp,
     
     print("Critical amplitude appears to be between", lower_amp, "and", upper_amp)
     try :
-        upper_ms.plot_fields(True)
-        lower_ms.plot_fields(True)
+        comboplot(upper_fields)
+        plt.figure(2)
+        comboplot(lower_fields)
     except :
         pass
 
     return (lower_amp, upper_amp)
 
 
-def find_mass(Abar, rho0, amp, mOverR_thresh=0.98,
-        is_searching_for_crit=False, ms_steps=1500000,
-        MS_sm_sigma=0.0,
-        hm_steps=1500000, HM_sm_sigma=15.0,
-        HM_Abar=None, # can specify a different Abar for HM run
-        HM_cflfac=0.1
-    ):
-    """
-    Find mass of BHs for certain amplitude
-    set is_searching_for_crit=True when searching for the critical point
-    """
-    print('Finding mass with amp ' + str(amp))
-            
-    # Perform an MS run without raytracing to get the overdensity delta
-    ms = MS(Abar, rho0, amp, trace_ray=False, BH_threshold=-1e1, sm_sigma=MS_sm_sigma)
-    ms.adap_run_steps(ms_steps)
-    delta = ms.delta
-    
-    # Perform an MS run with raytracing to get ICs for an HM run
-    ms = MS(Abar, rho0, amp, trace_ray=True, BH_threshold=-1e1, sm_sigma=MS_sm_sigma)
-    flag = ms.adap_run_steps(ms_steps)
-    if(flag != 0):
-        raise ValueError('Not finishing ray-tracing with the amplitude ' + str(amp))
-        
-    # Perform an HM run
-    hm = HM(ms, mOverR=mOverR_thresh, sm_sigma=HM_sm_sigma, Abar=HM_Abar, cflfac=HM_cflfac)
-    bh_formed = hm.run_steps(hm_steps) == 1
-    if(not bh_formed and is_searching_for_crit==False):
-        print('Unable to reach the target 2m/R with the amplitude ' + str(amp))
-    
-    return (delta, hm.BH_mass2(), ms, hm)
 
+l_simstart = float(sys.argv[1])
+l_simeq = float(sys.argv[2])
+N = int(sys.argv[3])
 
+bounds = find_crit(iters=12, l_simstart=0, l_simeq=0,
+          lower_amp=0.70, upper_amp=0.72,
+          N=N, USE_FIXW=False, q_mult=0.2, TOL=1e-8)
 
-# simulation resolution parameter
-# (Not exactly the number of gridpoints for a mixed grid)
-n_mix = 3200
-n_uni = 3200
-
-# Generate an array of coordinate positions for the simulation to run at
-lower = np.log(5.65) # The coordinates will be linearly spaced from 0 to e^lower
-upper = np.log(21.0) # The coordinates will be log spaced from e^lower to e^upper
-Abar_mix = mix_grid(lower, upper, n_mix)
-Abar_uni = uni_grid(upper, n_uni)
-
-plt.plot(Abar_mix, 'k.')
-plt.plot(Abar_uni, 'b.')
-print("The grid of Abar values is linearly spaced from Abar = 0 to", np.exp(lower),
-      "then log spaced until Abar =", np.exp(upper))
-
-
-
-
-
-
-# rho0 = float(sys.argv[1]) # initial density value in MeV^4
-# fixw = int(sys.argv[2]) # 0 for not fixed, 1 for fixed initially, 2 for fixed at turnaround
-# if(fixw == 0) :
-#     fixw = False
-#     use_turnaround = False
-# elif(fixw == 1) :
-#     fixw = True
-#     use_turnaround = False
-# elif(fixw == 2) :
-#     fixw = True
-#     use_turnaround = True
-# else :
-#     print("Error running simulation, bad fixw specified.")
-
-# print("Running simulation with rho0 =", rho0, ", fixw =", fixw, ", and use_turnaround = ", use_turnaround)
-# find_crit(Abar, rho0, 0.15, 0.3, fixw=fixw,sm_sigma=2.0)
-
-
-
-# find_crit(Abar_mix, 1.0e0, 0.15, 0.3, fixw=False, sm_sigma=0.0)
-delta, mass, ms, hm = find_mass(Abar_mix, 1.0e0, 0.2727, mOverR_thresh=0.994,
-          MS_sm_sigma=0.0, hm_steps=79000, HM_sm_sigma=30.0, HM_Abar=Abar_mix, HM_cflfac=0.1)
-
-
-# delta, mass, ms, hm = find_mass(Abar_mix, 1.0e0, 0.2727, mOverR_thresh=0.994,
-#           MS_sm_sigma=0.0, hm_steps=150000, HM_sm_sigma=50.0, HM_Abar=Abar_mix, HM_cflfac=0.1)
-
-
-# ms = MS(Abar_mix, 1.0e0, 0.28, trace_ray=True, BH_threshold=-1e1, sm_sigma=0.0)
-# ms.adap_run_steps(500)
-# ms.timer.results()
-
-# hm = HM(ms, mOverR=0.99, sm_sigma=15.0)
-# hm.adap_run_steps(100)
-# hm.timer.results()
+print("Final bounds are", bounds)

@@ -1,16 +1,13 @@
 #!/bin/bash
 
-for EXPONENT in {0..20}
+for l_simeq in {0..16}
 do
-	for fixw in 0 1 2
+	for l_simstart in 0 $(($l_simeq-1)) $l_simeq
 	do
-		for AMP in 1.0 1.259 1.585 1.995 2.511 3.162 3.981 5.012 6.310 7.943
-		do
-			NUMBER="${AMP}e${EXPONENT}"
-			ipython3 Critical_scaling.py $NUMBER $fixw > "output_${fixw}_${NUMBER}.txt" &
-		done
-		wait $!
+		# echo $l_simstart $l_simeq
+		python3 Critical_scaling.py $l_simeq $l_simstart 400 > "output/run1_${l_simeq}_${l_simstart}.txt"
 	done
+	# wait $!
 done
 
 
