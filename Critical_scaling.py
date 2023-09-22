@@ -1,11 +1,8 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-import sys
+import sys, os, re
 from importlib import reload 
-import scipy.interpolate as interp
-import scipy.constants as const
-from scipy import stats
 import subprocess
 import numpy as np
 import scipy.optimize as opt
@@ -15,14 +12,6 @@ c_lib = ctypes.CDLL('cpp/ms.so')
 c_real_t = ctypes.c_double
 c_bool_t = ctypes.c_bool
 c_real_ptr_t = ctypes.POINTER(c_real_t)
-
-import matplotlib.pyplot as plt
-import matplotlib as mpl
-mpl.rc('xtick', direction='in', top=True)
-mpl.rc('ytick', direction='in', right=True)
-mpl.rc('xtick.minor', visible=True)
-mpl.rc('ytick.minor', visible=True)
-
 
 c_lib.P_of_rho.restype = c_real_t
 c_lib.P_of_rho.argtypes = [c_real_t]
@@ -76,12 +65,13 @@ def find_crit(iters=12,
     l_simeq=0,
     lower_amp=-1,
     upper_amp=-1,
-    steps=100000,
+    steps=2000000,
     N=800,
     Ld=32.0,
     USE_FIXW=False,
     q_mult=0.25,
-    TOL=1.0e-7
+    TOL=1.0e-7,
+    failstop=False
 ):
     """
     Binary search between lower and upper to find a critical amplitude
@@ -119,6 +109,9 @@ def find_crit(iters=12,
             if result == 0 : # Ran out of steps
                 print("Ran out of steps. Breaking.")
                 break
+            elif result <= 1 and failstop : # Some sort of error during run
+                print("Stopping on failure.")
+                break
             elif result <= 1 : # Some sort of error during run
                 print("Encountered error during run. Trying again with a different amplitude.")
                 # change bisection factor (don't divide just in half; walk in by 1/4, 1/8, ... from the ends.)
@@ -141,23 +134,82 @@ def find_crit(iters=12,
             break
     
     print("Critical amplitude appears to be between", lower_amp, "and", upper_amp)
-    try :
-        comboplot(upper_fields)
-        plt.figure(2)
-        comboplot(lower_fields)
-    except :
-        pass
 
     return (lower_amp, upper_amp)
 
 
 
-l_simstart = float(sys.argv[1])
-l_simeq = float(sys.argv[2])
-N = int(sys.argv[3])
+l_simeq_str = sys.argv[1]
+l_simeq = float(sys.argv[1])
+l_simstart_str = sys.argv[2]
+l_simstart = float(sys.argv[2])
+N = 400
+N_max = 6400
 
-bounds = find_crit(iters=12, l_simstart=0, l_simeq=0,
-          lower_amp=0.70, upper_amp=0.72,
-          N=N, USE_FIXW=False, q_mult=0.2, TOL=1e-8)
+lower_amp = -1.0
+upper_amp = -1.0
 
-print("Final bounds are", bounds)
+prev_run_file = "output/run1_"+l_simeq_str+"_"+l_simstart_str+".txt"
+if os.path.exists(prev_run_file) :
+    print("Old file found,", prev_run_file)
+    with open(prev_run_file, 'r') as fp :
+        lines = fp.readlines()
+        for row in lines:
+            if row.find('Former bounds are') != -1 :
+                print(row)
+            if row.find('Final bounds are') != -1 :
+                matches = re.findall(r"[0-9\.]+", row)
+                lower_amp = float(matches[0])
+                upper_amp = float(matches[1])
+                print("Former bounds are", lower_amp, upper_amp)
+                # broaden bounds a bit...
+                delta_amp = upper_amp - lower_amp
+                upper_amp = upper_amp + 3*delta_amp
+                lower_amp = lower_amp - 2*delta_amp
+            if row.find('gridpoints, amplitude') != -1 :
+                old_N = re.findall(r"[0-9]+", row)
+                new_N = int(old_N[0])*2
+                if new_N > N_max :
+                    new_N = N_max
+                if N != new_N :
+                    print("Old N was", N, "-- using new N", new_N)
+                    N = new_N
+else :
+    print("Old file NOT found,", prev_run_file)
+
+
+print("Using bounds (", lower_amp, upper_amp, ")")
+
+while True :
+    print("Searching for CP with", N, lower_amp, upper_amp)
+    if N == N_max :
+        lower_amp, upper_amp = find_crit(iters=4, l_simstart=l_simstart, l_simeq=l_simeq,
+                  lower_amp=lower_amp, upper_amp=upper_amp,
+                  N=N, USE_FIXW=False, q_mult=0.2, TOL=1e-8, failstop=False)
+        lower_amp, upper_amp = find_crit(iters=4, l_simstart=l_simstart, l_simeq=l_simeq,
+                  lower_amp=lower_amp, upper_amp=upper_amp,
+                  N=N, USE_FIXW=False, q_mult=0.15, TOL=8e-9, failstop=False)
+        lower_amp, upper_amp = find_crit(iters=4, l_simstart=l_simstart, l_simeq=l_simeq,
+                  lower_amp=lower_amp, upper_amp=upper_amp,
+                  N=N, USE_FIXW=False, q_mult=0.1, TOL=5e-9, failstop=False)
+        break
+    else :
+        # Narrow in bounds
+        if N >= N_max//2 :
+            # Getting close...
+            lower_amp, upper_amp = find_crit(iters=6, l_simstart=l_simstart, l_simeq=l_simeq,
+                      lower_amp=lower_amp, upper_amp=upper_amp,
+                      N=N, USE_FIXW=False, q_mult=0.25, TOL=3e-8, failstop=False)
+        else :
+            lower_amp, upper_amp = find_crit(iters=6, l_simstart=l_simstart, l_simeq=l_simeq,
+                      lower_amp=lower_amp, upper_amp=upper_amp,
+                      N=N, USE_FIXW=False, q_mult=0.3, TOL=6e-8, failstop=True)
+        # Broaden a bit, since the resolution can change when it is increased
+        delta_amp = upper_amp - lower_amp
+        upper_amp = upper_amp + 3*delta_amp
+        lower_amp = lower_amp - 2*delta_amp
+        N = N*2
+        if N > N_max :
+            N = N_max
+
+print("Final bounds are -- ", lower_amp, upper_amp, l_simstart, l_simeq)
