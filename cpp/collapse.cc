@@ -1002,7 +1002,7 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0, real_t &bh
             std::cout << "Density becoming singular at step "<<s<<". q was "<<q<<"\n";
             real_t rho0_frac = (rho0_thresh - prev_rho0)/(rho0 - prev_rho0);
             bh_mass = rho0_frac*(bh_mass - prev_bh_mass) + prev_bh_mass;
-            std::cout << "BH mass near singularity was" << bh_mass << "\n";
+            std::cout << "BH mass near singularity was " << bh_mass << "\n";
             break;
         }
         if(rho0 < 0.25*max_rho0)
