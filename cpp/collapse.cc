@@ -485,6 +485,91 @@ void smooth(real_t *f)
     free(f_new);
 }
 
+/**
+ * Change Abar coordinates
+ */
+extern "C"
+void regrid(real_t *agg, real_t lam, real_t nu)
+{
+    int i=0;
+
+    real_t *Ab = agg + 0;
+    real_t *Rt = agg + 1*NN;
+    real_t *mt = agg + 2*NN;
+    real_t *Ut = agg + 3*NN;
+
+    ALLOC(new_Ab)
+    ALLOC(cum_I_sigma) // field to try to sample regularly
+    // use abs(d2mt/dAb2) + lam for sigma
+    ALLOC(d2mtdAb2)
+    d2fdA2(mt, Ab, d2mtdAb2);
+    smooth(d2mtdAb2);
+    cum_I_sigma[0] = 0;
+    for(i=1; i<NN; i++)
+    {
+        // trapezoidal integration rule
+        real_t I_sigma_i = ( std::tanh(std::fabs(d2mtdAb2[i])/100)+std::tanh(std::fabs(d2mtdAb2[i-1])/100) )/2 + lam;
+        real_t dA = Ab[i] - Ab[i-1];
+        cum_I_sigma[i] = cum_I_sigma[i-1] + I_sigma_i*dA;
+    }
+
+    // Spline to get Ab at even ds intervals
+    std::vector<real_t> Ab_s ( Ab, Ab+NN );
+    std::vector<real_t> cs_s ( cum_I_sigma, cum_I_sigma+NN );
+    tk::spline Ab_at_cum_I_sigma( cs_s, Ab_s, tk::spline::cspline, true );
+    // ds intervals are total sigma subdivided into NN-1 bins (def'd by NN points)
+    real_t ds = cum_I_sigma[NN-1]/(NN-1);
+    new_Ab[0] = 0;
+#pragma omp parallel for default(shared) private(i)    
+    for(i=1; i<NN; i++)
+        new_Ab[i] = Ab_at_cum_I_sigma(i*ds);
+#pragma omp parallel for default(shared) private(i)    
+    for(i=0; i<NN; i++)
+        new_Ab[i] = (1.0-nu)*Ab[i] + nu*new_Ab[i];
+
+    // interpolating functions for fields
+    std::vector<real_t> Ab_v ( NN+4.0 );
+    std::vector<real_t> Rt_v ( NN+4.0 );
+    std::vector<real_t> mt_v ( NN+4.0 );
+    std::vector<real_t> Ut_v ( NN+4.0 );
+#pragma omp parallel for default(shared) private(i)
+    for(i=0; i<NN; i++)
+    {
+        Ab_v[i+3] = Ab[i];
+        Rt_v[i+3] = Rt[i];
+        mt_v[i+3] = mt[i];
+        Ut_v[i+3] = Ut[i];
+    }
+#pragma omp parallel for default(shared) private(i)
+    for(i=0; i<3; i++)
+    {
+        Ab_v[i] = -Ab[3-i];
+        Rt_v[i] = Rt[3-i];
+        mt_v[i] = mt[3-i];
+        Ut_v[i] = Ut[3-i];
+    }
+    Ab_v[NN+3] = Ab[NN-1]+(Ab[NN-1]-Ab[NN-2]);
+    Rt_v[NN+3] = Rt[NN-1];
+    mt_v[NN+3] = mt[NN-1];
+    Ut_v[NN+3] = Ut[NN-1];
+
+    tk::spline RtofAb(Ab_v, Rt_v);
+    tk::spline mtofAb(Ab_v, mt_v);
+    tk::spline UtofAb(Ab_v, Ut_v);
+
+#pragma omp parallel for default(shared) private(i)
+    for(i=0; i<NN; i++)
+    {
+        Ab[i] = new_Ab[i];
+        Rt[i] = RtofAb(new_Ab[i]);
+        mt[i] = mtofAb(new_Ab[i]);
+        Ut[i] = UtofAb(new_Ab[i]);
+    }
+
+    free(new_Ab);
+    free(d2mtdAb2);
+    free(cum_I_sigma);
+}
 
 /**
  * Populate the aggregate list of values ("agg"), structured as NFIELDS
@@ -493,7 +578,7 @@ void smooth(real_t *f)
  * NFIELDS - 4 arrays (detailed in code below).
  */
 extern "C"
-void agg_pop(real_t * agg, real_t l)
+void agg_pop(real_t *agg, real_t l)
 {
     int i=0;
     real_t e2l = std::exp(2*l);
@@ -671,89 +756,36 @@ void k_calc(real_t *agg, kCoefficientData *ks,  real_t l_in, real_t deltal, real
 }
 
 /**
- * Change Abar coordinates
+ * Compute the black hole mass at a specific index.
+ * Mass is in units of R_H^I.
  */
-extern "C"
-void regrid(real_t *agg, real_t lam, real_t nu)
+real_t mass_at(real_t *agg, real_t l, int i)
 {
-    int i=0;
-
     real_t *Ab = agg + 0;
     real_t *Rt = agg + 1*NN;
     real_t *mt = agg + 2*NN;
-    real_t *Ut = agg + 3*NN;
+    return std::exp(l)/2.0/G(l)*std::pow(Ab[i]*Rt[i],3)*mt[i];
+}
 
-    ALLOC(new_Ab)
-    ALLOC(cum_I_sigma) // field to try to sample regularly
-    // use abs(d2mt/dAb2) + lam for sigma
-    ALLOC(d2mtdAb2)
-    d2fdA2(mt, Ab, d2mtdAb2);
-    smooth(d2mtdAb2);
-    cum_I_sigma[0] = 0;
-    for(i=1; i<NN; i++)
+/**
+ * Return Misher-Sharp mass
+ * (BH mass at outermost trapped surface).
+ */
+real_t ms_mass(real_t *agg, real_t l)
+{
+    int i=0;
+    real_t *m2oR = agg + 11*NN;
+
+    for(i=0; i<NN-1; i++)
     {
-        // trapezoidal integration rule
-        real_t I_sigma_i = ( std::tanh(std::fabs(d2mtdAb2[i])/100)+std::tanh(std::fabs(d2mtdAb2[i-1])/100) )/2 + lam;
-        real_t dA = Ab[i] - Ab[i-1];
-        cum_I_sigma[i] = cum_I_sigma[i-1] + I_sigma_i*dA;
+        if(m2oR[i] > 1 && m2oR[i+1] <= 1)
+        {
+            real_t m2oR_frac = (1 - m2oR[i])/(m2oR[i+1] - m2oR[i]);
+            return m2oR_frac*(mass_at(agg, l, i+1) - mass_at(agg, l, i)) + mass_at(agg, l, i);
+        }
     }
 
-    // Spline to get Ab at even ds intervals
-    std::vector<real_t> Ab_s ( Ab, Ab+NN );
-    std::vector<real_t> cs_s ( cum_I_sigma, cum_I_sigma+NN );
-    tk::spline Ab_at_cum_I_sigma( cs_s, Ab_s, tk::spline::cspline, true );
-    // ds intervals are total sigma subdivided into NN-1 bins (def'd by NN points)
-    real_t ds = cum_I_sigma[NN-1]/(NN-1);
-    new_Ab[0] = 0;
-#pragma omp parallel for default(shared) private(i)    
-    for(i=1; i<NN; i++)
-        new_Ab[i] = Ab_at_cum_I_sigma(i*ds);
-#pragma omp parallel for default(shared) private(i)    
-    for(i=0; i<NN; i++)
-        new_Ab[i] = (1.0-nu)*Ab[i] + nu*new_Ab[i];
-
-    // interpolating functions for fields
-    std::vector<real_t> Ab_v ( NN+4.0 );
-    std::vector<real_t> Rt_v ( NN+4.0 );
-    std::vector<real_t> mt_v ( NN+4.0 );
-    std::vector<real_t> Ut_v ( NN+4.0 );
-#pragma omp parallel for default(shared) private(i)
-    for(i=0; i<NN; i++)
-    {
-        Ab_v[i+3] = Ab[i];
-        Rt_v[i+3] = Rt[i];
-        mt_v[i+3] = mt[i];
-        Ut_v[i+3] = Ut[i];
-    }
-#pragma omp parallel for default(shared) private(i)
-    for(i=0; i<3; i++)
-    {
-        Ab_v[i] = -Ab[3-i];
-        Rt_v[i] = Rt[3-i];
-        mt_v[i] = mt[3-i];
-        Ut_v[i] = Ut[3-i];
-    }
-    Ab_v[NN+3] = Ab[NN-1]+(Ab[NN-1]-Ab[NN-2]);
-    Rt_v[NN+3] = Rt[NN-1];
-    mt_v[NN+3] = mt[NN-1];
-    Ut_v[NN+3] = Ut[NN-1];
-
-    tk::spline RtofAb(Ab_v, Rt_v);
-    tk::spline mtofAb(Ab_v, mt_v);
-    tk::spline UtofAb(Ab_v, Ut_v);
-
-#pragma omp parallel for default(shared) private(i)
-    for(i=0; i<NN; i++)
-    {
-        Ab[i] = new_Ab[i];
-        Rt[i] = RtofAb(new_Ab[i]);
-        mt[i] = mtofAb(new_Ab[i]);
-        Ut[i] = UtofAb(new_Ab[i]);
-    }
-
-    free(new_Ab);
-    free(d2mtdAb2);
-    free(cum_I_sigma);
+    return 0;
 }
 
 /**
@@ -770,7 +802,7 @@ void write_output(real_t *agg, real_t l, std::ofstream & output)
  * starting l, run for a number of steps, outputting per the interval.
  */
 extern "C"
-int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0,
+int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0, real_t &bh_mass,
     int steps, int output_interval,
     bool stop_on_horizon, real_t q_mult, bool smooth_rho, bool use_weno,
     int regrid_interval, real_t regrid_lam, real_t regrid_nu, real_t TOL)
@@ -781,8 +813,15 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0,
     // variables for interpolating delta @ horizon crossing
     real_t rhot_horizon = 2.0, old_rhot_horizon = 2.0;
     real_t delta_horizon = 0.0, old_delta_horizon = 0.0;
+    real_t m_horizon = 0.0, old_m_horizon = 0.0;
+    // Tracking density and BH formation
+    real_t prev_rho0 = 0.0, rho0 = 0.0;
+    real_t prev_bh_mass = 0.0;
     // return value flag
     int flag = 0;
+    // Integration tolerances
+    real_t deltal = 1.5e-4, q = -1.0;
+    real_t rel_TE_max = 0.0;
     // reusable iterator
     int i = 0;
 
@@ -812,9 +851,6 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0,
     std::ofstream output;
     output.open("output.dat", std::ios::out | std::ios::binary | std::ios::trunc);
     int s = 0, isteps = 0;
-    real_t deltal = 1.5e-4, q = -1.0;
-    real_t rel_TE_max = 0.0;
-    real_t prev_rho0 = 0.0, rho0 = 0.0;
     for(s=0; s<=steps; s++)
     {
         // Upkeep
@@ -915,30 +951,36 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0,
         real_t *rhot = agg + 7*NN;
         if(deltaH < 0)
         {
-            real_t rho_b = rho_background(l);
             real_t AbRt_horizon = std::sqrt( G(l) );
 
             for(i=0; i<NN - 1; i++)
             {
                 real_t AbRt1 = Ab[i]*Rt[i];
                 real_t AbRt2 = Ab[i+1]*Rt[i+1];
-                bool at_horizon = AbRt1 < AbRt_horizon && AbRt2 > AbRt_horizon;
 
-                if( at_horizon )
+                if( AbRt1 < AbRt_horizon && AbRt2 > AbRt_horizon ) // at horizon
                 {
+                    // interpolate rhot and delta at the horizon.
+                    real_t AbRt_frac = (AbRt_horizon - AbRt1)/(AbRt2 - AbRt1);
+
                     old_rhot_horizon = rhot_horizon;
-                    rhot_horizon = (AbRt_horizon - AbRt1)/(AbRt2 - AbRt1)*(rhot[i+1] - rhot[i]) + rhot[i];
+                    rhot_horizon = AbRt_frac*(rhot[i+1] - rhot[i]) + rhot[i];
                     old_delta_horizon = delta_horizon;
-                    delta_horizon = (AbRt_horizon - AbRt1)/(AbRt2 - AbRt1)*(mt[i+1] - mt[i]) + mt[i] - 1;
+                    delta_horizon = AbRt_frac*(mt[i+1] - mt[i]) + mt[i] - 1;
+                    old_m_horizon = m_horizon;
+                    m_horizon = AbRt_frac*(mass_at(agg, l, i+1) - mass_at(agg, l, i)) + mass_at(agg, l, i);
 
                     if(old_rhot_horizon >= 1 && rhot_horizon < 1)
                     {
-                        deltaH = old_delta_horizon
-                            + (1.0 - old_rhot_horizon)/(rhot_horizon - old_rhot_horizon)*(delta_horizon - old_delta_horizon);
+                        // interpolate deltaH at the time of horizon crossing (when the underdensity crosses).
+                        real_t rhot_frac = (1.0 - old_rhot_horizon)/(rhot_horizon - old_rhot_horizon);
+                        deltaH = rhot_frac*(delta_horizon - old_delta_horizon) + old_delta_horizon;
+                        real_t mH = rhot_frac*(m_horizon - old_m_horizon) + old_m_horizon;
                         std::cout << "Density perturbation at cosmological horizon crossing found: \n  deltaH=" << deltaH
-                            << " near l=" << l << ", rhot in (" << rhot_horizon << "," << old_rhot_horizon << "),"
-                            << " mt in (" << mt[i] << "," << mt[i+1] << "), AbRt in (" << AbRt1 << "," << AbRt2 << "), "
-                            << "and AbRt_horizon=" << AbRt_horizon << " at step "<<s<<"\n";
+                            << " and mH=" << mH << " near l=" << l
+                            << ", rhot in (" << rhot_horizon << "," << old_rhot_horizon << ")"
+                            << ", mt in (" << mt[i] << "," << mt[i+1] << "), AbRt in (" << AbRt1 << "," << AbRt2 << ")"
+                            << ", and AbRt_horizon=" << AbRt_horizon << " at step "<<s<<"\n";
                     }
                     break;
                 }
@@ -950,11 +992,17 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0,
         rho0 = max(rhot);
         if(rho0 > max_rho0)
             max_rho0 = rho0;
-        if(rho0 > 1.0e12)
+        prev_bh_mass = bh_mass;
+        bh_mass = ms_mass(agg, l);
+        real_t rho0_thresh = 1.0e9;
+        if(rho0 > rho0_thresh)
         {
             // Assume singularity is forming
             flag = 1;
             std::cout << "Density becoming singular at step "<<s<<". q was "<<q<<"\n";
+            real_t rho0_frac = (rho0_thresh - prev_rho0)/(rho0 - prev_rho0);
+            bh_mass = rho0_frac*(bh_mass - prev_bh_mass) + prev_bh_mass;
+            std::cout << "BH mass near singularity was" << bh_mass << "\n";
             break;
         }
         if(rho0 < 0.25*max_rho0)
@@ -973,6 +1021,9 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0,
                 {
                     flag = 3;
                     std::cout << "Horizon formed at step "<<s<<". q was "<<q<<"\n";
+                    real_t rho0_frac = (rho0_thresh - prev_rho0)/(rho0 - prev_rho0);
+                    bh_mass = rho0_frac*(bh_mass - prev_bh_mass) + prev_bh_mass;
+                    std::cout << "BH mass near singularity was" << bh_mass << "\n";
                     break;
                 }
             }
@@ -1052,12 +1103,13 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0,
  * d is the perturbation size in horizon units.
  */
 extern "C"
-void ics(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0,
+void ics(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0, real_t &bh_mass,
     real_t amp, real_t d, int n, real_t Ld, bool use_fixw)
 {
     NN = n;
     deltaH = -1.0;
     max_rho0 = 0.0;
+    bh_mass = 0.0;
 
     USE_FIXW = false;
     real_t rho_b = rho_background(l);
@@ -1151,9 +1203,9 @@ int main(int argc, char **argv)
 
     ALLOC_N(agg, NFIELDS*NN)
 
-    real_t l=0, deltaH, max_rho0;
-    ics(agg, l, deltaH, max_rho0, amp, d, NN, 20.0, USE_FIXW);
-    run_sim(agg, l, deltaH, max_rho0, steps, output_interval, false, 0.25,
+    real_t l=0, deltaH, max_rho0, bh_mass;
+    ics(agg, l, deltaH, max_rho0, bh_mass, amp, d, NN, 20.0, USE_FIXW);
+    run_sim(agg, l, deltaH, max_rho0, bh_mass, steps, output_interval, false, 0.25,
         SMOOTH_RHO, USE_WENO, 0, 0.0, 0.0, 1.0e-7);
 
     free(agg);

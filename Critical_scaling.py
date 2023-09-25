@@ -27,11 +27,11 @@ c_lib.G.restype = c_real_t
 c_lib.G.argtypes = [c_real_t]
 
 
-c_lib.ics.argtypes = [ c_real_ptr_t, c_real_ptr_t, c_real_ptr_t,
+c_lib.ics.argtypes = [ c_real_ptr_t, c_real_ptr_t, c_real_ptr_t, c_real_ptr_t,
     c_real_ptr_t, c_real_t, c_real_t, ctypes.c_int, c_real_t, c_bool_t ]
 c_lib.ics.restype = None
 
-c_lib.run_sim.argtypes = [ c_real_ptr_t, c_real_ptr_t, c_real_ptr_t, c_real_ptr_t,
+c_lib.run_sim.argtypes = [ c_real_ptr_t, c_real_ptr_t, c_real_ptr_t, c_real_ptr_t, c_real_ptr_t,
                           ctypes.c_int, ctypes.c_int,
                           c_bool_t, c_real_t, c_bool_t, c_bool_t,
                           ctypes.c_int, c_real_t, c_real_t, c_real_t]
@@ -46,9 +46,10 @@ c_lib.agg_pop.restype = None
 def min_gammab2(amp, l_simstart, l_simeq, USE_FIXW=False, Ld=30, N=3200) :
     max_rho0 = c_real_t(0)
     deltaH = c_real_t(-2)
+    bh_mass = c_real_t(0)
     agg = (c_real_t*(N*13))()
     l = c_real_t(l_simstart)
-    c_lib.ics(agg, ctypes.byref(l), ctypes.byref(deltaH), ctypes.byref(max_rho0),
+    c_lib.ics(agg, ctypes.byref(l), ctypes.byref(deltaH), ctypes.byref(max_rho0), ctypes.byref(bh_mass),
               amp*c_lib.G(l_simstart)/c_lib.G(l_simeq), # Amplitude scaled down by the relative growth factor
               np.exp(l_simeq), # Abar scale set by the equality factor
               N, Ld, USE_FIXW)
@@ -94,13 +95,14 @@ def find_crit(iters=12,
 
             deltaH = c_real_t(-2)
             max_rho0 = c_real_t(0)
+            bh_mass = c_real_t(0)
             agg = (c_real_t*(N*13))()
             l = c_real_t(l_simstart)
            
-            c_lib.ics(agg, ctypes.byref(l), ctypes.byref(deltaH), ctypes.byref(max_rho0),
+            c_lib.ics(agg, ctypes.byref(l), ctypes.byref(deltaH), ctypes.byref(max_rho0), ctypes.byref(bh_mass),
                       middle_amp*c_lib.G(l_simstart)/c_lib.G(l_simeq), np.exp(l_simeq), N, Ld, USE_FIXW)
 
-            result = c_lib.run_sim(agg, ctypes.byref(l), ctypes.byref(deltaH), ctypes.byref(max_rho0),
+            result = c_lib.run_sim(agg, ctypes.byref(l), ctypes.byref(deltaH), ctypes.byref(max_rho0), ctypes.byref(bh_mass),
                                 steps, -1, True, q_mult, True, True, -400, 1.0, 0.001, TOL)
             print(result, l, c_lib.G(l_simstart)/c_lib.G(l_simeq), deltaH, max_rho0)
             
@@ -138,11 +140,10 @@ def find_crit(iters=12,
     return (lower_amp, upper_amp)
 
 
-
-l_simeq_str = sys.argv[1]
-l_simeq = float(sys.argv[1])
-l_simstart_str = sys.argv[2]
-l_simstart = float(sys.argv[2])
+l_simstart_str = sys.argv[1]
+l_simstart = float(sys.argv[1])
+l_simeq_str = sys.argv[2]
+l_simeq = float(sys.argv[2])
 N = 400
 N_max = 6400
 
@@ -199,14 +200,14 @@ while True :
             # Getting close...
             lower_amp, upper_amp = find_crit(iters=6, l_simstart=l_simstart, l_simeq=l_simeq,
                       lower_amp=lower_amp, upper_amp=upper_amp,
-                      N=N, USE_FIXW=False, q_mult=0.25, TOL=3e-8, failstop=False)
+                      N=N, USE_FIXW=False, q_mult=0.2, TOL=3e-8, failstop=False)
         else :
-            lower_amp, upper_amp = find_crit(iters=6, l_simstart=l_simstart, l_simeq=l_simeq,
+            lower_amp, upper_amp = find_crit(iters=4, l_simstart=l_simstart, l_simeq=l_simeq,
                       lower_amp=lower_amp, upper_amp=upper_amp,
-                      N=N, USE_FIXW=False, q_mult=0.3, TOL=6e-8, failstop=True)
+                      N=N, USE_FIXW=False, q_mult=0.25, TOL=3e-8, failstop=False)
         # Broaden a bit, since the resolution can change when it is increased
         delta_amp = upper_amp - lower_amp
-        upper_amp = upper_amp + 3*delta_amp
+        upper_amp = upper_amp + 4*delta_amp
         lower_amp = lower_amp - 2*delta_amp
         N = N*2
         if N > N_max :
