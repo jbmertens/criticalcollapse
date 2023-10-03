@@ -817,6 +817,7 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0, real_t &bh
     // Tracking density and BH formation
     real_t prev_rho0 = 0.0, rho0 = 0.0;
     real_t prev_bh_mass = 0.0;
+    real_t prev_m2oRmax = 0.0;
     // return value flag
     int flag = 0;
     // Integration tolerances
@@ -994,7 +995,7 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0, real_t &bh
             max_rho0 = rho0;
         prev_bh_mass = bh_mass;
         bh_mass = ms_mass(agg, l);
-        real_t rho0_thresh = 1.0e9;
+        real_t rho0_thresh = 1.0e10;
         if(rho0 > rho0_thresh)
         {
             // Assume singularity is forming
@@ -1015,15 +1016,30 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0, real_t &bh
         real_t *m2oR = agg + 11*NN;
         if( stop_on_horizon )
         {
-            for(i=0; i<NN-1; i++)
+            for(i=1; i<NN-1; i++)
             {
+                // If a local maximum has formed and passed 1, this indicates an apparant horizon.
                 if(m2oR[i]>1 && m2oR[i+1]<1)
                 {
-                    flag = 3;
-                    std::cout << "Horizon formed at step "<<s<<". q was "<<q<<"\n";
-                    real_t rho0_frac = (rho0_thresh - prev_rho0)/(rho0 - prev_rho0);
-                    bh_mass = rho0_frac*(bh_mass - prev_bh_mass) + prev_bh_mass;
-                    std::cout << "BH mass near singularity was" << bh_mass << "\n";
+                    // approximate m2oRmax
+                    real_t c = m2oR[i];
+                    real_t b = (m2oR[i+1] - m2oR[i-1])/2.0;
+                    real_t a = (m2oR[i+1] - 2.0*m2oR[i] + m2oR[i-1])/2.0;
+                    real_t m2oRmax = c - b*b/4/a;
+
+                    // Run a 2nd step after horizon is found to interpolate the BH mass @ horizon formation
+                    if(prev_m2oRmax <= 0)
+                    {
+                        prev_m2oRmax = m2oRmax;
+                    }
+                    else
+                    {
+                        std::cout << "Apparant horizon formed at step "<<s<<". q was "<<q<<"\n";
+                        real_t m2oRmax_frac = (1.0 - prev_m2oRmax)/(m2oRmax - prev_m2oRmax);
+                        bh_mass = m2oRmax_frac*(bh_mass - prev_bh_mass) + prev_bh_mass;
+                        std::cout << "BH mass at horizon formation was " << bh_mass << "\n";
+                        flag = 3;
+                    }
                     break;
                 }
             }

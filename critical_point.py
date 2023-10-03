@@ -144,13 +144,19 @@ l_simstart_str = sys.argv[1]
 l_simstart = float(sys.argv[1])
 l_simeq_str = sys.argv[2]
 l_simeq = float(sys.argv[2])
+fixw = False
+if sys.argv[3] == "fixw" :
+    fixw = True
 N = 400
 N_max = 6400
 
 lower_amp = -1.0
 upper_amp = -1.0
 
-prev_run_file = "output/run1_"+l_simeq_str+"_"+l_simstart_str+".txt"
+if fixw :
+    prev_run_file = "output/fixw_"+l_simeq_str+"_"+l_simstart_str+".txt"
+else :
+    prev_run_file = "output/run_"+l_simeq_str+"_"+l_simstart_str+".txt"
 if os.path.exists(prev_run_file) :
     print("Old file found,", prev_run_file)
     with open(prev_run_file, 'r') as fp :
@@ -186,13 +192,13 @@ while True :
     if N == N_max :
         lower_amp, upper_amp = find_crit(iters=4, l_simstart=l_simstart, l_simeq=l_simeq,
                   lower_amp=lower_amp, upper_amp=upper_amp,
-                  N=N, USE_FIXW=False, q_mult=0.2, TOL=1e-8, failstop=False)
+                  N=N, USE_FIXW=fixw, q_mult=0.2, TOL=1e-8, failstop=False)
         lower_amp, upper_amp = find_crit(iters=4, l_simstart=l_simstart, l_simeq=l_simeq,
                   lower_amp=lower_amp, upper_amp=upper_amp,
-                  N=N, USE_FIXW=False, q_mult=0.15, TOL=8e-9, failstop=False)
+                  N=N, USE_FIXW=fixw, q_mult=0.15, TOL=8e-9, failstop=False)
         lower_amp, upper_amp = find_crit(iters=4, l_simstart=l_simstart, l_simeq=l_simeq,
                   lower_amp=lower_amp, upper_amp=upper_amp,
-                  N=N, USE_FIXW=False, q_mult=0.1, TOL=5e-9, failstop=False)
+                  N=N, USE_FIXW=fixw, q_mult=0.1, TOL=5e-9, failstop=False)
         break
     else :
         # Narrow in bounds
@@ -200,11 +206,11 @@ while True :
             # Getting close...
             lower_amp, upper_amp = find_crit(iters=6, l_simstart=l_simstart, l_simeq=l_simeq,
                       lower_amp=lower_amp, upper_amp=upper_amp,
-                      N=N, USE_FIXW=False, q_mult=0.2, TOL=3e-8, failstop=False)
+                      N=N, USE_FIXW=fixw, q_mult=0.2, TOL=3e-8, failstop=False)
         else :
             lower_amp, upper_amp = find_crit(iters=4, l_simstart=l_simstart, l_simeq=l_simeq,
                       lower_amp=lower_amp, upper_amp=upper_amp,
-                      N=N, USE_FIXW=False, q_mult=0.25, TOL=3e-8, failstop=False)
+                      N=N, USE_FIXW=fixw, q_mult=0.25, TOL=3e-8, failstop=False)
         # Broaden a bit, since the resolution can change when it is increased
         delta_amp = upper_amp - lower_amp
         upper_amp = upper_amp + 4*delta_amp
