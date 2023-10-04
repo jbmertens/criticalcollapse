@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include "spline.h"
+#include <iomanip>
 
 typedef double real_t;
 
@@ -826,6 +827,8 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0, real_t &bh
     // reusable iterator
     int i = 0;
 
+    std::cout << std::fixed;
+    std::cout << std::setprecision(12);
     std::cout << "\n============\nRunning sim.\n" << std::flush;
     std::cout << "\n";
     std::cout << "Using "<<steps<<" steps with "<<NN<<" gridpoints. Output every "
