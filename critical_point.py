@@ -98,7 +98,7 @@ def find_crit(iters=12,
             bh_mass = c_real_t(0)
             agg = (c_real_t*(N*13))()
             l = c_real_t(l_simstart)
-           
+
             c_lib.ics(agg, ctypes.byref(l), ctypes.byref(deltaH), ctypes.byref(max_rho0), ctypes.byref(bh_mass),
                       middle_amp*c_lib.G(l_simstart)/c_lib.G(l_simeq), np.exp(l_simeq), N, Ld, USE_FIXW)
 
