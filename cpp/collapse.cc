@@ -1009,7 +1009,7 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0, real_t &bh
             std::cout << "BH mass near singularity was " << bh_mass << "\n";
             break;
         }
-        if(rho0 < 0.25*max_rho0)
+        if( rho0 < 0.9*max_rho0 && deltaH > 0 )
         {
             // Assume no BH is forming
             flag = 2;

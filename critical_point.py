@@ -68,7 +68,7 @@ def find_crit(iters=12,
     upper_amp=-1,
     steps=2000000,
     N=800,
-    Ld=32.0,
+    Ld=21.0,
     USE_FIXW=False,
     q_mult=0.25,
     TOL=1.0e-7,
@@ -79,10 +79,11 @@ def find_crit(iters=12,
     (Note that this is NOT the critical density)
     return (critical, upper value)
     """
-    if lower_amp < 0 :
-        lower_amp = 0.2*max_phys_amp(l_simstart, l_simeq, USE_FIXW, Ld, N)
-    if upper_amp < 0 :
-        upper_amp = 0.9*max_phys_amp(l_simstart, l_simeq, USE_FIXW, Ld, N)
+    mpa = max_phys_amp(l_simstart, l_simeq, USE_FIXW, Ld, N)
+    if lower_amp < 0 or lower_amp < 0.2*mpa:
+        lower_amp = 0.2*mpa
+    if upper_amp < 0 or upper_amp > 0.9*mpa :
+        upper_amp = 0.9*mpa
     upper_fields = -1
     lower_fields = -1
     bisection_factor = 1/2
@@ -147,8 +148,8 @@ l_simeq = float(sys.argv[2])
 fixw = False
 if sys.argv[3] == "fixw" :
     fixw = True
-N = 400
-N_max = 6400
+N = 512
+N_max = 65536
 
 lower_amp = -1.0
 upper_amp = -1.0
@@ -171,8 +172,8 @@ if os.path.exists(prev_run_file) :
                 print("Former bounds are", lower_amp, upper_amp)
                 # broaden bounds a bit...
                 delta_amp = upper_amp - lower_amp
-                upper_amp = upper_amp + 3*delta_amp
-                lower_amp = lower_amp - 2*delta_amp
+                upper_amp = upper_amp + 2*delta_amp
+                lower_amp = lower_amp - 1.5*delta_amp
             if row.find('gridpoints, amplitude') != -1 :
                 old_N = re.findall(r"[0-9]+", row)
                 new_N = int(old_N[0])*2
@@ -213,8 +214,12 @@ while True :
                       N=N, USE_FIXW=fixw, q_mult=0.25, TOL=3e-8, failstop=False)
         # Broaden a bit, since the resolution can change when it is increased
         delta_amp = upper_amp - lower_amp
-        upper_amp = upper_amp + 4*delta_amp
-        lower_amp = lower_amp - 2*delta_amp
+        upper_amp = upper_amp + 2.5*delta_amp
+        lower_amp = lower_amp - 1.5*delta_amp
+        if upper_amp > 0.8 :
+            upper_amp = 0.8
+        if lower_amp < 0.01 :
+            lower_amp = 0.01
         N = N*2
         if N > N_max :
             N = N_max

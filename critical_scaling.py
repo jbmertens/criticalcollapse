@@ -44,14 +44,13 @@ c_lib.regrid.restype = None
 c_lib.agg_pop.argtypes = [ c_real_ptr_t, c_real_t ]
 c_lib.agg_pop.restype = None
 
-
 def find_mass(
     l_simstart=0,
     l_simeq=0,
     amp=0.7162501041727418,
     steps=2000000,
-    N=6400,
-    Ld=32.0,
+    N=65536,
+    Ld=21.0,
     USE_FIXW=False,
     q_mult=0.08,
     TOL=4e-9,
@@ -105,8 +104,8 @@ else :
                 break
 
         damp = upper_amp - lower_amp
-        damps = np.logspace( np.log10(damp/5), np.log10(50*damp), 50 )
-        amps = lower_amp + damps
+        damps = np.logspace( np.log10(damp/10), np.log10(0.02), 30 )
+        amps = np.concatenate(( lower_amp + damps, upper_amp - damp/20 - damps))
         print("Bounds identified were (", lower_amp, ",", upper_amp, "). Running with amplitudes", amps)
 
         runs = []
@@ -117,7 +116,7 @@ else :
         print("Final data:", np.array(runs))
 
         gmask = runs[:,0]==3
-        pars = opt.curve_fit( fitfn, runs[gmask,3], np.log(runs[gmask,5]), [0.35, 0.43, 2.0], bounds=( 0.0, [1.0., 1.0, 30.0] ) )[0]
+        pars = opt.curve_fit( fitfn, runs[gmask,3], np.log(runs[gmask,5]), [0.35, 0.43, 2.0], bounds=( 0.0, [1.0, 1.0, 30.0] ) )[0]
         print("Fit parameters:", pars)
         # plt.scatter( np.log(fwd[gmask,3]-pars[1]), np.log(fwd[gmask,5]) );
         # plt.plot( np.log(fwd[gmask,3]-pars[1]), fitfn(fwd[gmask,3], pars[0], pars[1], pars[2]) );
