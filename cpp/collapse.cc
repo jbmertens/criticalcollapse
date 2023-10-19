@@ -389,22 +389,27 @@ void dPtdAbstg(real_t *agg, real_t *dPtdAb, real_t rho_b)
     real_t *Rt = agg + 1*NN;
     real_t *mt = agg + 2*NN;
 
-    real_t Pt_stg = 0, Ab_stg = 0;
+    ALLOC_N( Pt_stg, NN )
 
+#pragma omp parallel for default(shared) private(i)
     for(i=0; i<NN-1; i++)
     {
-        real_t Ab_stg_prev = Ab_stg;
-        Ab_stg = (Ab[i]+Ab[i+1])/2;
-
-        real_t Pt_stg_prev = Pt_stg;
+        real_t Ab_stg = (Ab[i]+Ab[i+1])/2;
         real_t Rt_stg = (Rt[i]+Rt[i+1])/2;
         real_t mt_stg = (mt[i]+mt[i+1])/2;
         real_t rhot_stg = mt_stg + Ab_stg*Rt_stg*(mt[i+1] - mt[i])
                             / 3 / (Ab[i+1]*Rt[i+1] - Ab[i]*Rt[i]);
-        Pt_stg = Pt_of_rhot(rhot_stg, rho_b);
-
-        dPtdAb[i] = (Pt_stg - Pt_stg_prev)/(Ab_stg - Ab_stg_prev);
+        Pt_stg[i] = Pt_of_rhot(rhot_stg, rho_b);
     }
+
+#pragma omp parallel for default(shared) private(i)
+    for(i=1; i<NN-1; i++)
+    {
+        real_t dAb_stg = (Ab[i+1]-Ab[i-1])/2;
+        dPtdAb[i] = (Pt_stg[i] - Pt_stg[i-1])/dAb_stg;
+    }
+
+    free(Pt_stg);
 
     dPtdAb[0] = 0;
     dPtdAb[NN-1] = dPtdAb[NN-2];
@@ -427,9 +432,11 @@ void dPtdAbstg_WENO(real_t *agg, real_t *dPtdAb, real_t rho_b)
     WENO_stg( rhot, rhot_stg );
     
     ALLOC_N( Pt_stg, NN )
+#pragma omp parallel for default(shared) private(i)
     for(i=0; i<NN; i++)
         Pt_stg[i] = Pt_of_rhot(rhot_stg[i], rho_b);
 
+#pragma omp parallel for default(shared) private(i)
     for(i=1; i<NN; i++)
         dPtdAb[i] = (Pt_stg[i] - Pt_stg[i-1])/(Ab_stg[i] - Ab_stg[i-1]);
     dPtdAb[0] = 0;
@@ -689,10 +696,19 @@ void agg_pop(real_t *agg, real_t l)
     // coordinate. We use Eq. 51, Assuming radiation-dominated cosmology values
     // for the equation of state. Close to zero works, anyways.
     // phi[NN-1] = -std::log(rhot[NN-1])/2.0;
-    phi[NN-1] = -std::log( (1 + Pt[NN-1]) / (1 + P_b/rho_b) );
-    phi[NN-2] = phi[NN-1] + (Pt[NN-1] - Pt[NN-2])*2.0/(Pt[NN-2] + Pt[NN-1] + rhot[NN-2] + rhot[NN-1]);
-    for(i=NN-3; i>=0; i--)
-        phi[i] = (Pt[i+2] - Pt[i])/(Pt[i+1] + rhot[i+1]) + phi[i+2];
+
+    // Proper integration
+    // phi[NN-1] = -std::log( (1 + Pt[NN-1]) / (1 + P_b/rho_b) );
+    // phi[NN-2] = phi[NN-1] + (Pt[NN-1] - Pt[NN-2])*2.0/(Pt[NN-2] + Pt[NN-1] + rhot[NN-2] + rhot[NN-1]);
+    // for(i=NN-3; i>=0; i--)
+    //     phi[i] = (Pt[i+2] - Pt[i])/(Pt[i+1] + rhot[i+1]) + phi[i+2];
+
+#pragma omp parallel for default(shared) private(i)
+        for(i=0; i<NN; i++)
+        {
+            real_t w_loc = dPdrho_rhot(rhot[i], rho_b);
+            phi[i] = w_loc/(1+w_loc)*std::log( 1.0 / rhot[NN-1] );
+        }
 }
 
 /**
@@ -876,22 +892,16 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0, real_t &bh
         // RKF(4,5) method https://en.wikipedia.org/wiki/Runge%E2%80%93Kutta%E2%80%93Fehlberg_method
         k_calc(agg, &ks,  l, deltal, 0,
             ks.kR1, ks.km1, ks.kU1, 0, 0, 0, 0, 0);  // Compute k1 coefficients
-        for(i=0; i<13*NN; i++) { if(std::isnan(ks.agg_f[i])) { std::cout << "k1 nan at " << i << ", " << s << "\n"; return -1; } }
         k_calc(agg, &ks,  l, deltal, 2.0/9.0,
             ks.kR2, ks.km2, ks.kU2, 2.0/9.0, 0, 0, 0, 0);  // Compute k2 coefficients
-        for(i=0; i<13*NN; i++) { if(std::isnan(ks.agg_f[i])) { std::cout << "k2 nan at " << i << ", " << s << "\n"; return -1; } }
         k_calc(agg, &ks,  l, deltal, 1.0/3.0,
             ks.kR3, ks.km3, ks.kU3, 1.0/12.0, 1.0/4.0, 0, 0, 0);  // Compute k3 coefficients
-        for(i=0; i<13*NN; i++) { if(std::isnan(ks.agg_f[i])) { std::cout << "k3 nan at " << i << ", " << s << "\n"; return -1; } }
         k_calc(agg, &ks,  l, deltal, 3.0/4.0,
             ks.kR4, ks.km4, ks.kU4, 69.0/128.0, -243.0/128.0, 135.0/64.0, 0, 0);  // Compute k4 coefficients
-        for(i=0; i<13*NN; i++) { if(std::isnan(ks.agg_f[i])) { std::cout << "k4 nan at " << i << ", " << s << "\n"; return -1; } }
         k_calc(agg, &ks,  l, deltal, 1.0,
             ks.kR5, ks.km5, ks.kU5, -17.0/12.0, 27.0/4.0, -27.0/5.0, 16.0/15.0, 0);  // Compute k5 coefficients
-        for(i=0; i<13*NN; i++) { if(std::isnan(ks.agg_f[i])) { std::cout << "k5 nan at " << i << ", " << s << "\n"; return -1; } }
         k_calc(agg, &ks,  l, deltal, 5.0/6.0,
             ks.kR6, ks.km6, ks.kU6, 65.0/432.0, -5.0/16.0, 13.0/16.0, 4.0/27.0, 5.0/144.0);  // Compute k6 coefficients
-        for(i=0; i<13*NN; i++) { if(std::isnan(ks.agg_f[i])) { std::cout << "k6 nan at " << i << ", " << s << "\n"; return -1; } }
 
         // Truncation error estimate
 #pragma omp parallel for default(shared) private(i)
