@@ -43,7 +43,7 @@ c_lib.agg_pop.argtypes = [ c_real_ptr_t, c_real_t ]
 c_lib.agg_pop.restype = None
 
 
-def min_gammab2(amp, l_simstart, l_simeq, USE_FIXW=False, Ld=30, N=3200) :
+def min_gammab2(amp, l_simstart, l_simeq, USE_FIXW=False, Ld=30, N=1024) :
     max_rho0 = c_real_t(0)
     deltaH = c_real_t(-2)
     bh_mass = c_real_t(0)
@@ -51,13 +51,13 @@ def min_gammab2(amp, l_simstart, l_simeq, USE_FIXW=False, Ld=30, N=3200) :
     l = c_real_t(l_simstart)
     c_lib.ics(agg, ctypes.byref(l), ctypes.byref(deltaH), ctypes.byref(max_rho0), ctypes.byref(bh_mass),
               amp*c_lib.G(l_simstart)/c_lib.G(l_simeq), # Amplitude scaled down by the relative growth factor
-              np.exp(l_simeq), # Abar scale set by the equality factor
+              1.6*np.sqrt(c_lib.G(l_simeq)), # Abar scale set by the equality factor
               N, Ld, USE_FIXW)
     agg = np.reshape(np.copy(agg), (13, N))
     gammab2 = agg[6];
     return np.min(gammab2)
 
-def max_phys_amp(l_simstart, l_simeq, USE_FIXW=False, Ld=30, N=3200) :
+def max_phys_amp(l_simstart, l_simeq, USE_FIXW=False, Ld=30, N=1024) :
     return opt.root( min_gammab2, 0.5, (l_simstart, l_simeq, USE_FIXW, Ld, N) ).x[0]
 
 
@@ -67,8 +67,8 @@ def find_crit(iters=12,
     lower_amp=-1,
     upper_amp=-1,
     steps=2000000,
-    N=800,
-    Ld=21.0,
+    N=1024,
+    Ld=42.0,
     USE_FIXW=False,
     q_mult=0.25,
     TOL=1.0e-7,
@@ -101,7 +101,7 @@ def find_crit(iters=12,
             l = c_real_t(l_simstart)
 
             c_lib.ics(agg, ctypes.byref(l), ctypes.byref(deltaH), ctypes.byref(max_rho0), ctypes.byref(bh_mass),
-                      middle_amp*c_lib.G(l_simstart)/c_lib.G(l_simeq), np.exp(l_simeq), N, Ld, USE_FIXW)
+                      middle_amp*c_lib.G(l_simstart)/c_lib.G(l_simeq), 1.6*np.sqrt(c_lib.G(l_simeq)), N, Ld, USE_FIXW)
 
             result = c_lib.run_sim(agg, ctypes.byref(l), ctypes.byref(deltaH), ctypes.byref(max_rho0), ctypes.byref(bh_mass),
                                 steps, -1, True, q_mult, True, True, -400, 1.0, 0.001, TOL)
@@ -148,8 +148,8 @@ l_simeq = float(sys.argv[2])
 fixw = False
 if sys.argv[3] == "fixw" :
     fixw = True
-N = 512
-N_max = 65536
+N = 2048
+N_max = 2048
 
 lower_amp = -1.0
 upper_amp = -1.0
@@ -188,40 +188,10 @@ else :
 
 print("Using bounds (", lower_amp, upper_amp, ")")
 
-while True :
-    print("Searching for CP with", N, lower_amp, upper_amp)
-    if N == N_max :
-        lower_amp, upper_amp = find_crit(iters=4, l_simstart=l_simstart, l_simeq=l_simeq,
-                  lower_amp=lower_amp, upper_amp=upper_amp,
-                  N=N, USE_FIXW=fixw, q_mult=0.2, TOL=1e-8, failstop=False)
-        lower_amp, upper_amp = find_crit(iters=4, l_simstart=l_simstart, l_simeq=l_simeq,
-                  lower_amp=lower_amp, upper_amp=upper_amp,
-                  N=N, USE_FIXW=fixw, q_mult=0.15, TOL=8e-9, failstop=False)
-        lower_amp, upper_amp = find_crit(iters=4, l_simstart=l_simstart, l_simeq=l_simeq,
-                  lower_amp=lower_amp, upper_amp=upper_amp,
-                  N=N, USE_FIXW=fixw, q_mult=0.1, TOL=5e-9, failstop=False)
-        break
-    else :
-        # Narrow in bounds
-        if N >= N_max//2 :
-            # Getting close...
-            lower_amp, upper_amp = find_crit(iters=6, l_simstart=l_simstart, l_simeq=l_simeq,
-                      lower_amp=lower_amp, upper_amp=upper_amp,
-                      N=N, USE_FIXW=fixw, q_mult=0.2, TOL=3e-8, failstop=False)
-        else :
-            lower_amp, upper_amp = find_crit(iters=4, l_simstart=l_simstart, l_simeq=l_simeq,
-                      lower_amp=lower_amp, upper_amp=upper_amp,
-                      N=N, USE_FIXW=fixw, q_mult=0.25, TOL=3e-8, failstop=False)
-        # Broaden a bit, since the resolution can change when it is increased
-        delta_amp = upper_amp - lower_amp
-        upper_amp = upper_amp + 2.5*delta_amp
-        lower_amp = lower_amp - 1.5*delta_amp
-        if upper_amp > 0.8 :
-            upper_amp = 0.8
-        if lower_amp < 0.01 :
-            lower_amp = 0.01
-        N = N*2
-        if N > N_max :
-            N = N_max
+print("Searching for CP with", N, lower_amp, upper_amp)
+lower_amp, upper_amp = find_crit(iters=30, l_simstart=l_simstart, l_simeq=l_simeq,
+          lower_amp=lower_amp, upper_amp=upper_amp,
+          N=N, USE_FIXW=fixw, q_mult=0.15, TOL=7e-9, failstop=False)
+
 
 print("Final bounds are -- ", lower_amp, upper_amp, l_simstart, l_simeq)

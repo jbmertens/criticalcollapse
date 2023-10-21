@@ -49,11 +49,11 @@ def find_mass(
     l_simeq=0,
     amp=0.7162501041727418,
     steps=2000000,
-    N=65536,
-    Ld=21.0,
+    N=2048,
+    Ld=42.0,
     USE_FIXW=False,
-    q_mult=0.08,
-    TOL=4e-9,
+    q_mult=0.15,
+    TOL=7e-9,
     horizon_stop=False
 ) :
     deltaH = c_real_t(-2)
@@ -63,7 +63,7 @@ def find_mass(
     l = c_real_t(l_simstart)
 
     c_lib.ics(agg, ctypes.byref(l), ctypes.byref(deltaH), ctypes.byref(max_rho0), ctypes.byref(bh_mass),
-              amp*c_lib.G(l_simstart)/c_lib.G(l_simeq), np.exp(l_simeq), N, Ld, USE_FIXW)
+              amp*c_lib.G(l_simstart)/c_lib.G(l_simeq), 1.6*np.sqrt(c_lib.G(l_simeq)), N, Ld, USE_FIXW)
 
     result = c_lib.run_sim(agg, ctypes.byref(l), ctypes.byref(deltaH), ctypes.byref(max_rho0), ctypes.byref(bh_mass),
                         steps, -1, horizon_stop, q_mult, True, True, -400, 1.0, 0.001, TOL)
@@ -104,7 +104,7 @@ else :
                 break
 
         damp = upper_amp - lower_amp
-        damps = np.logspace( np.log10(damp/10), np.log10(0.02), 30 )
+        damps = np.logspace( np.log10(damp/10), np.log10(0.01), 30 )
         amps = np.concatenate(( lower_amp + damps, upper_amp - damp/20 - damps))
         print("Bounds identified were (", lower_amp, ",", upper_amp, "). Running with amplitudes", amps)
 
@@ -115,8 +115,8 @@ else :
 
         print("Final data:", np.array(runs))
 
-        gmask = runs[:,0]==3
-        pars = opt.curve_fit( fitfn, runs[gmask,3], np.log(runs[gmask,5]), [0.35, 0.43, 2.0], bounds=( 0.0, [1.0, 1.0, 30.0] ) )[0]
-        print("Fit parameters:", pars)
+        # gmask = runs[:,0]==3
+        # pars = opt.curve_fit( fitfn, runs[gmask,3], np.log(runs[gmask,5]), [0.35, 0.43, 2.0], bounds=( 0.0, [1.0, 1.0, 30.0] ) )[0]
+        # print("Fit parameters:", pars)
         # plt.scatter( np.log(fwd[gmask,3]-pars[1]), np.log(fwd[gmask,5]) );
         # plt.plot( np.log(fwd[gmask,3]-pars[1]), fitfn(fwd[gmask,3], pars[0], pars[1], pars[2]) );

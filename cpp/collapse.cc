@@ -476,13 +476,23 @@ void smooth(real_t *f)
 
     ALLOC( f_new )
 
+// #pragma omp parallel for default(shared) private(i)
+//     for(i=2; i<NN-2; i++)
+//         f_new[i] = (f[i-2]+4*f[i-1]+6*f[i]+4*f[i+1]+f[i+2])/16.0;
+//     f_new[0] = (6*f[0]+4*f[1]+f[2])/11.0;
+//     f_new[NN-1] = (f[NN-3]+4*f[NN-2]+6*f[NN-1])/11.0;
+//     f_new[1] = (4*f[0]+6*f[1]+4*f[2]+f[3])/15.0;
+//     f_new[NN-2] = (f[NN-4]+4*f[NN-3]+6*f[NN-2]+4*f[NN-1])/15.0;
+
 #pragma omp parallel for default(shared) private(i)
-    for(i=2; i<NN-2; i++)
-        f_new[i] = (f[i-2]+4*f[i-1]+6*f[i]+4*f[i+1]+f[i+2])/16.0;
-    f_new[0] = (6*f[0]+4*f[1]+f[2])/11.0;
-    f_new[NN-1] = (f[NN-3]+4*f[NN-2]+6*f[NN-1])/11.0;
-    f_new[1] = (4*f[0]+6*f[1]+4*f[2]+f[3])/15.0;
-    f_new[NN-2] = (f[NN-4]+4*f[NN-3]+6*f[NN-2]+4*f[NN-1])/15.0;
+    for(i=3; i<NN-3; i++)
+        f_new[i] = (f[i-3]+6*f[i-2]+15*f[i-1]+20*f[i]+15*f[i+1]+6*f[i+2]+f[i+3])/64.0;
+    f_new[0] = (20*f[0]+15*f[1]+6*f[2]+f[3])/42.0;
+    f_new[NN-1] = (f[NN-4]+6*f[NN-3]+15*f[NN-2]+20*f[NN-1])/42.0;
+    f_new[1] = (15*f[0]+20*f[1]+15*f[2]+6*f[3]+f[4])/57.0;
+    f_new[NN-2] = (f[NN-5]+6*f[NN-4]+15*f[NN-3]+20*f[NN-2]+15*f[NN-1])/57.0;
+    f_new[2] = (6*f[0]+15*f[1]+20*f[2]+15*f[3]+6*f[4]+f[5])/63.0;
+    f_new[NN-3] = (f[NN-6]+6*f[NN-5]+15*f[NN-4]+20*f[NN-3]+15*f[NN-2]+6*f[NN-1])/63.0;
     
     // ENOify(f_new);
 
@@ -645,12 +655,14 @@ void agg_pop(real_t *agg, real_t l)
     if(SMOOTH_RHO)
     {
         smooth(rhot);
+        // smooth(rhot);
     }
 
     // Compute pressure (P tilde)
 #pragma omp parallel for default(shared) private(i)
     for(i=0; i<NN; i++)
         Pt[i] = Pt_of_rhot(rhot[i], rho_b);
+    smooth(Pt);
 
     // Compute (artificial) viscosity
     real_t kappa = 2.0;
@@ -671,14 +683,38 @@ void agg_pop(real_t *agg, real_t l)
         Qt[0] = Qt[1];
         Qt[NN-1] = Qt[NN-2];
 
-        // Smooth the viscosity curve a bit
+        // Smooth the viscosity curve
         smooth(Qt);
+    }
 
+    // Perform integration to compute metric (phi). The boundary value can be
+    // chosen; shifting it by a constant amounts to re-scaling the time
+    // coordinate. We use Eq. 51, Assuming radiation-dominated cosmology values
+    // for the equation of state. Close to zero works, anyways.
+    // phi[NN-1] = -std::log(rhot[NN-1])/2.0;
+
+    // Proper integration
+    phi[NN-1] = -std::log( (1 + Pt[NN-1]) / (1 + P_b/rho_b) );
+    phi[NN-2] = phi[NN-1] + (Pt[NN-1] - Pt[NN-2])*2.0/(Pt[NN-2] + Pt[NN-1] + rhot[NN-2] + rhot[NN-1]);
+    for(i=NN-3; i>=0; i--)
+        phi[i] = (Pt[i+2] - Pt[i])/(Pt[i+1] + rhot[i+1]) + phi[i+2];
+
+    // phi using w=const appx.
+// #pragma omp parallel for default(shared) private(i)
+//     for(i=0; i<NN; i++)
+//     {
+//         real_t w_loc = dPdrho_rhot(rhot[i], rho_b);
+//         phi[i] = -w_loc/(1+Pt[i]/rhot[i])*std::log( rhot[i] );
+//     }
+    smooth(phi);
+
+    // Add in artificial viscosity
+    if(kappa > 0)
+    {
 #pragma omp parallel for default(shared) private(i)
         for(i=0; i<NN; i++)
             Pt[i] += Qt[i];
     }
-
     // Compute derivative of pressure
     if(USE_WENO)
     {
@@ -690,25 +726,6 @@ void agg_pop(real_t *agg, real_t l)
     {
         dPtdAbstg(agg, dPtdAb, rho_b);
     }
-
-    // Perform integration to compute metric (phi). The boundary value can be
-    // chosen; shifting it by a constant amounts to re-scaling the time
-    // coordinate. We use Eq. 51, Assuming radiation-dominated cosmology values
-    // for the equation of state. Close to zero works, anyways.
-    // phi[NN-1] = -std::log(rhot[NN-1])/2.0;
-
-    // Proper integration
-    // phi[NN-1] = -std::log( (1 + Pt[NN-1]) / (1 + P_b/rho_b) );
-    // phi[NN-2] = phi[NN-1] + (Pt[NN-1] - Pt[NN-2])*2.0/(Pt[NN-2] + Pt[NN-1] + rhot[NN-2] + rhot[NN-1]);
-    // for(i=NN-3; i>=0; i--)
-    //     phi[i] = (Pt[i+2] - Pt[i])/(Pt[i+1] + rhot[i+1]) + phi[i+2];
-
-#pragma omp parallel for default(shared) private(i)
-        for(i=0; i<NN; i++)
-        {
-            real_t w_loc = dPdrho_rhot(rhot[i], rho_b);
-            phi[i] = w_loc/(1+w_loc)*std::log( 1.0 / rhot[NN-1] );
-        }
 }
 
 /**
@@ -869,7 +886,8 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0, real_t &bh
 
     // main integration loop
     std::ofstream output;
-    output.open("output.dat", std::ios::out | std::ios::binary | std::ios::trunc);
+    if(output_interval > 0)
+        output.open("output.dat", std::ios::out | std::ios::binary | std::ios::trunc);
     int s = 0, isteps = 0;
     for(s=0; s<=steps; s++)
     {
@@ -1111,7 +1129,8 @@ int run_sim(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0, real_t &bh
     std::cout << "  max_rho0 was "<<max_rho0<<", rel_TE_max was "<<rel_TE_max<<".\n";
     std::cout << "\nDone running.\n=============\n";
 
-    output.close();
+    if(output_interval > 0)
+        output.close();
 
     free(ks.agg_f);
     free(ks.kR1); free(ks.kR2); free(ks.kR3); free(ks.kR4); free(ks.kR5); free(ks.kR6);
@@ -1180,16 +1199,18 @@ void ics(real_t *agg, real_t &l, real_t &deltaH, real_t &max_rho0, real_t &bh_ma
 int main(int argc, char **argv)
 {
 
-    int steps = 1000, output_interval=1000;
-    real_t amp = 0.3, d = 1.6;
+    int steps = 100000, output_interval=-1;
+    NN = 512;
+    real_t l = 15.0;
+    real_t amp = 0.35;
+    real_t d = 1.5*std::sqrt(G(l));
 
     static struct option long_options[] =
     {
         {"steps",  required_argument, 0, 's'},
-        {"d",      required_argument, 0, 'd'},
+        {"l",      required_argument, 0, 'l'},
         {"amp",    required_argument, 0, 'a'},
         {"N",      required_argument, 0, 'N'},
-        {"output", required_argument, 0, 'o'},
         {"help",   no_argument,       0, 'h'}
     };
 
@@ -1220,22 +1241,20 @@ int main(int argc, char **argv)
                 break;
             case 'h':
             case '?':
-                fprintf(stdout, "\nusage: %s -N [gridpoints] -s [steps] -d [size] -a [amp] -o [output_interval] \n", argv[0]);
-                fprintf(stdout, "All options are optional; if not specified, defaults will be used.\n");
+                fprintf(stdout, "See the code for options.\n");
                 return 0;
             default:
                 fprintf(stdout, "Unrecognized option.\n");
                 return 0;
         }
     }
-    if(!output_interval) output_interval = steps;
 
     ALLOC_N(agg, NFIELDS*NN)
 
-    real_t l=0, deltaH, max_rho0, bh_mass;
-    ics(agg, l, deltaH, max_rho0, bh_mass, amp, d, NN, 20.0, USE_FIXW);
-    run_sim(agg, l, deltaH, max_rho0, bh_mass, steps, output_interval, false, 0.25,
-        SMOOTH_RHO, USE_WENO, 0, 0.0, 0.0, 1.0e-7);
+    real_t deltaH, max_rho0, bh_mass;
+    ics(agg, l, deltaH, max_rho0, bh_mass, amp, d, NN, 42.0, USE_FIXW);
+    run_sim(agg, l, deltaH, max_rho0, bh_mass, steps, output_interval, true, 0.15,
+        SMOOTH_RHO, USE_WENO, 0, 0.0, 0.0, 0.5e-9);
 
     free(agg);
 

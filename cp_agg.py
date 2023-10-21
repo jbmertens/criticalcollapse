@@ -3,7 +3,7 @@
 
 import numpy as np
 import glob, re
-files = glob.glob('output/run_*.txt')
+files = glob.glob('output/fixw_*.txt')
 print(files)
 
 run_data = []
