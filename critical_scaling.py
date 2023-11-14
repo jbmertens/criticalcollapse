@@ -49,25 +49,25 @@ def find_mass(
     l_simeq=0,
     amp=0.7162501041727418,
     steps=2000000,
-    N=2048,
+    N=8192,
     Ld=42.0,
     USE_FIXW=False,
-    q_mult=0.15,
-    TOL=7e-9,
-    horizon_stop=False
+    q_mult=0.1,
+    TOL=3.0e-9
 ) :
     deltaH = c_real_t(-2)
     max_rho0 = c_real_t(0)
     bh_mass = c_real_t(0)
     agg = (c_real_t*(N*13))()
     l = c_real_t(l_simstart)
+    amp = amp*c_lib.G(l_simstart)/c_lib.G(l_simeq)
 
     c_lib.ics(agg, ctypes.byref(l), ctypes.byref(deltaH), ctypes.byref(max_rho0), ctypes.byref(bh_mass),
-              amp*c_lib.G(l_simstart)/c_lib.G(l_simeq), 1.6*np.sqrt(c_lib.G(l_simeq)), N, Ld, USE_FIXW)
+              amp, 1.6*np.sqrt(c_lib.G(l_simeq)), N, Ld, USE_FIXW)
 
     result = c_lib.run_sim(agg, ctypes.byref(l), ctypes.byref(deltaH), ctypes.byref(max_rho0), ctypes.byref(bh_mass),
-                        steps, -1, horizon_stop, q_mult, True, True, -400, 1.0, 0.001, TOL)
-    print(result, l, c_lib.G(l_simstart)/c_lib.G(l_simeq), deltaH, max_rho0, bh_mass)
+                        steps, -1, True, q_mult, True, True, -1, 1.0, 1.0, TOL)
+    print("result:", result, float(l.value), amp, float(deltaH.value), float(max_rho0.value), float(bh_mass.value))
 
     fields = np.reshape(np.copy(agg), (13, N))
 
@@ -84,6 +84,9 @@ if sys.argv[3] == "fixw" :
     fixw = True
     files = glob.glob('output/fixw_'+l_simstart_str+'_'+l_simeq_str+'.txt')
 print(files)
+N = int(sys.argv[4])
+if N <= 0 :
+    N = 1024
 
 if len(files) != 1 :
     print("Error determining files.")
@@ -111,7 +114,7 @@ else :
         runs = []
         for amp in np.flip(amps) :
             print("Getting mass with l_simstart =", l_simstart, "l_simeq =", l_simeq, "amp =", amp)
-            runs.append(find_mass( l_simstart=l_simstart, l_simeq=l_simeq, amp=amp, USE_FIXW=fixw, horizon_stop=True ))
+            runs.append(find_mass( l_simstart=l_simstart, l_simeq=l_simeq, amp=amp, N=N, USE_FIXW=fixw))
 
         print("Final data:", np.array(runs))
 

@@ -70,8 +70,8 @@ def find_crit(iters=12,
     N=1024,
     Ld=42.0,
     USE_FIXW=False,
-    q_mult=0.25,
-    TOL=1.0e-7,
+    q_mult=0.1,
+    TOL=5.0e-9,
     failstop=False
 ):
     """
@@ -80,10 +80,13 @@ def find_crit(iters=12,
     return (critical, upper value)
     """
     mpa = max_phys_amp(l_simstart, l_simeq, USE_FIXW, Ld, N)
+    print("Called search for CP with", N, lower_amp, upper_amp)
     if lower_amp < 0 or lower_amp < 0.2*mpa:
         lower_amp = 0.2*mpa
+        print("Correcting lower to", lower_amp)
     if upper_amp < 0 or upper_amp > 0.9*mpa :
         upper_amp = 0.9*mpa
+        print("Correcting upper to", upper_amp)
     upper_fields = -1
     lower_fields = -1
     bisection_factor = 1/2
@@ -99,13 +102,14 @@ def find_crit(iters=12,
             bh_mass = c_real_t(0)
             agg = (c_real_t*(N*13))()
             l = c_real_t(l_simstart)
+            amp = middle_amp*c_lib.G(l_simstart)/c_lib.G(l_simeq)
 
             c_lib.ics(agg, ctypes.byref(l), ctypes.byref(deltaH), ctypes.byref(max_rho0), ctypes.byref(bh_mass),
-                      middle_amp*c_lib.G(l_simstart)/c_lib.G(l_simeq), 1.6*np.sqrt(c_lib.G(l_simeq)), N, Ld, USE_FIXW)
+                      amp, 1.6*np.sqrt(c_lib.G(l_simeq)), N, Ld, USE_FIXW)
 
             result = c_lib.run_sim(agg, ctypes.byref(l), ctypes.byref(deltaH), ctypes.byref(max_rho0), ctypes.byref(bh_mass),
-                                steps, -1, True, q_mult, True, True, -400, 1.0, 0.001, TOL)
-            print(result, l, c_lib.G(l_simstart)/c_lib.G(l_simeq), deltaH, max_rho0)
+                                steps, -1, True, q_mult, True, True, -1, 0.0, 0.0, TOL)
+            print("result:", result, float(l.value), amp, float(deltaH.value), float(max_rho0.value), float(bh_mass.value))
             
             fields = np.reshape(np.copy(agg), (13, N))
 
@@ -148,8 +152,10 @@ l_simeq = float(sys.argv[2])
 fixw = False
 if sys.argv[3] == "fixw" :
     fixw = True
-N = 2048
-N_max = 2048
+N = int(sys.argv[4])
+if N <= 0 :
+    N = 1024
+N_max = N
 
 lower_amp = -1.0
 upper_amp = -1.0
@@ -186,12 +192,10 @@ else :
     print("Old file NOT found,", prev_run_file)
 
 
-print("Using bounds (", lower_amp, upper_amp, ")")
-
-print("Searching for CP with", N, lower_amp, upper_amp)
-lower_amp, upper_amp = find_crit(iters=30, l_simstart=l_simstart, l_simeq=l_simeq,
+lower_amp, upper_amp = find_crit(iters=24, l_simstart=l_simstart, l_simeq=l_simeq,
           lower_amp=lower_amp, upper_amp=upper_amp,
-          N=N, USE_FIXW=fixw, q_mult=0.15, TOL=7e-9, failstop=False)
+          N=N, USE_FIXW=fixw, q_mult=0.1, TOL=3e-9, failstop=False)
 
 
 print("Final bounds are -- ", lower_amp, upper_amp, l_simstart, l_simeq)
+
